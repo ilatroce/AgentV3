@@ -78,14 +78,14 @@ def previsione_trading_agent(prompt):
         },
         "verbosity": "medium"
     },
-    reasoning={
-        "effort": "medium",
-        "summary": "auto"
-    },
+    #reasoning={
+    #    "effort": "medium",
+    #    "summary": "auto"
+    #},
     tools=[],
     store=True,
     include=[
-        "reasoning.encrypted_content",
+        #"reasoning.encrypted_content",
         "web_search_call.action.sources"
     ])
     return(json.loads(response.output_text))
