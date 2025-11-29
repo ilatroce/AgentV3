@@ -11,6 +11,17 @@ import db_utils
 from dotenv import load_dotenv
 load_dotenv()
 
+# --- 1. SETUP INIZIALE DATABASE ---
+print("[Main] Avvio del sistema...")
+try:
+    print("[Main] Inizializzazione Database in corso...")
+    db_utils.init_db() # <--- QUESTA riga crea le tabelle su Postgres!
+    print("[Main] Database pronto e tabelle verificate.")
+except Exception as e:
+    print(f"!!! ERRORE CRITICO DATABASE !!!: {e}")
+    # Se il DB non va, è inutile partire.
+    exit(1)
+
 # Collegamento ad Hyperliquid
 TESTNET = True   # True = testnet, False = mainnet (occhio!)
 VERBOSE = True    # stampa informazioni extra
