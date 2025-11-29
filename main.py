@@ -23,7 +23,7 @@ except Exception as e:
     exit(1)
 
 # Collegamento ad Hyperliquid
-TESTNET = True   # True = testnet, False = mainnet (occhio!)
+TESTNET = False   # True = testnet, False = mainnet (occhio!)
 VERBOSE = True    # stampa informazioni extra
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")
 WALLET_ADDRESS = os.getenv("WALLET_ADDRESS")
