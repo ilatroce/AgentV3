@@ -28,12 +28,17 @@ VERBOSE = True    # stampa informazioni extra
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")
 WALLET_ADDRESS = os.getenv("WALLET_ADDRESS")
 
-if not PRIVATE_KEY or not WALLET_ADDRESS:
-    raise RuntimeError("PRIVATE_KEY o WALLET_ADDRESS mancanti nel .env")
-try:
-    bot = HyperLiquidTrader(
-        secret_key=PRIVATE_KEY,
-        account_address=WALLET_ADDRESS,
+TIMEFRAME_LOOP = 900 # Secondi di pausa tra un'operazione e l'altra
+
+
+while True:
+    print(f"\n--- Inizio ciclo di trading: {time.strftime('%Y-%m-%d %H:%M:%S')} ---")
+    if not PRIVATE_KEY or not WALLET_ADDRESS:
+        raise RuntimeError("PRIVATE_KEY o WALLET_ADDRESS mancanti nel .env")
+    try:
+        bot = HyperLiquidTrader(
+            secret_key=PRIVATE_KEY,
+            account_address=WALLET_ADDRESS,
         testnet=TESTNET
     )
 
@@ -77,3 +82,6 @@ except Exception as e:
                                     "balance":account_status
                                     }, source="trading_agent")
     print(f"An error occurred: {e}")
+
+print(f"Ciclo finito. In pausa per {TIMEFRAME_LOOP} secondi...")
+time.sleep(TIMEFRAME_LOOP)
