@@ -2,104 +2,222 @@ import streamlit as st
 import pandas as pd
 import psycopg2
 import os
+import json
 import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-# Configurazione Pagina
+# --- CONFIGURAZIONE ---
+MANUAL_DEPOSIT = 26.0  # <--- MODIFICA QUI IL TUO DEPOSITO INIZIALE
+BATMAN_YELLOW = "#F5C518"
+BATMAN_BLACK = "#0E1117"
+BATMAN_GREY = "#1f1f1f"
+
 st.set_page_config(
-    page_title="Cri, sono il più forte!!",
-    page_icon="📈",
+    page_title="AGENT BRUCE - Wayne Tech",
+    page_icon="🦇",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
-# Carica variabili
+# --- CSS PERSONALIZZATO (BATMAN STYLE) ---
+st.markdown(f"""
+    <style>
+    .stApp {{
+        background-color: {BATMAN_BLACK};
+        color: white;
+    }}
+    h1, h2, h3 {{
+        color: {BATMAN_YELLOW} !important;
+        font-family: 'Arial Black', sans-serif;
+    }}
+    .metric-card {{
+        background-color: {BATMAN_GREY};
+        border-left: 5px solid {BATMAN_YELLOW};
+        padding: 15px;
+        border-radius: 5px;
+        margin-bottom: 10px;
+    }}
+    .stDataFrame {{
+        border: 1px solid #333;
+    }}
+    </style>
+    """, unsafe_allow_html=True)
+
 load_dotenv()
 
 # --- FUNZIONI DATABASE ---
-def get_connection():
-    return psycopg2.connect(os.getenv("DATABASE_URL"))
-
+@st.cache_data(ttl=60) # Cache di 60 secondi per non sovraccaricare il DB
 def load_data():
-    conn = get_connection()
+    try:
+        conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+        
+        # 1. Storico Saldo (Account Snapshots)
+        query_balance = "SELECT created_at, balance_usd, raw_payload FROM account_snapshots ORDER BY created_at ASC"
+        df_balance = pd.read_sql(query_balance, conn)
+        
+        # 2. Operazioni (Bot Operations)
+        query_ops = "SELECT * FROM bot_operations ORDER BY created_at DESC"
+        df_ops = pd.read_sql(query_ops, conn)
+        
+        # 3. Posizioni Aperte (Dall'ultimo snapshot)
+        # Recuperiamo l'ultimo ID snapshot
+        query_last_snap = "SELECT id FROM account_snapshots ORDER BY created_at DESC LIMIT 1"
+        last_snap_id = pd.read_sql(query_last_snap, conn)
+        
+        df_positions = pd.DataFrame()
+        if not last_snap_id.empty:
+            snap_id = last_snap_id.iloc[0]['id']
+            query_pos = f"SELECT * FROM open_positions WHERE snapshot_id = {snap_id}"
+            df_positions = pd.read_sql(query_pos, conn)
+
+        conn.close()
+        return df_balance, df_ops, df_positions
+    except Exception as e:
+        st.error(f"Errore connessione DB: {e}")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+def calculate_pnl_change(df, hours_ago):
+    if df.empty: return 0.0
     
-    # 1. Scarica storico saldo
-    query_balance = """
-    SELECT created_at, balance_usd 
-    FROM account_snapshots 
-    ORDER BY created_at ASC
-    """
-    df_balance = pd.read_sql(query_balance, conn)
+    now = df.iloc[-1]['created_at']
+    target_time = now - timedelta(hours=hours_ago)
     
-    # 2. Scarica ultime operazioni
-    query_ops = """
-    SELECT created_at, symbol, operation, direction, leverage, target_portion_of_balance
-    FROM bot_operations
-    ORDER BY created_at DESC
-    LIMIT 100
-    """
-    df_ops = pd.read_sql(query_ops, conn)
+    # Trova il record più vicino al target_time
+    closest_row = df.iloc[(df['created_at'] - target_time).abs().argsort()[:1]]
     
-    # 3. Scarica errori (per monitoraggio)
-    query_errors = """
-    SELECT created_at, error_type, error_message, source
-    FROM errors
-    ORDER BY created_at DESC
-    LIMIT 20
-    """
-    df_errors = pd.read_sql(query_errors, conn)
+    if closest_row.empty: return 0.0
     
-    conn.close()
-    return df_balance, df_ops, df_errors
+    past_balance = closest_row.iloc[0]['balance_usd']
+    current_balance = df.iloc[-1]['balance_usd']
+    
+    return current_balance - past_balance
 
-# --- INTERFACCIA UTENTE ---
+# --- MAIN PAGE ---
 
-st.title("🤖 Il Trading bot di un vero Full Stack Deverope")
+st.title("🦇 AGENT BRUCE // DASHBOARD")
+st.markdown("---")
 
-# Bottone Refresh
-if st.button('🔄 Aggiorna Dati'):
-    st.rerun()
+df_balance, df_ops, df_positions = load_data()
 
-try:
-    df_balance, df_ops, df_errors = load_data()
+if not df_balance.empty:
+    # --- SEZIONE 1: KPI & PROFITTI ---
+    current_equity = df_balance.iloc[-1]['balance_usd']
+    total_pnl = current_equity - MANUAL_DEPOSIT
+    pnl_color = "green" if total_pnl >= 0 else "red"
 
-    # --- KPI IN ALTO ---
-    if not df_balance.empty:
-        current_balance = df_balance.iloc[-1]['balance_usd']
-        start_balance = df_balance.iloc[0]['balance_usd']
-        pnl = current_balance - start_balance
-        pnl_pct = (pnl / start_balance) * 100 if start_balance > 0 else 0
+    # Prima riga: Saldo Gigante
+    col_main_1, col_main_2 = st.columns([1, 3])
+    with col_main_1:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div style="font-size: 14px; color: #888;">WAYNE ENTERPRISE VALUE</div>
+            <div style="font-size: 36px; font-weight: bold; color: {BATMAN_YELLOW};">${current_equity:,.2f}</div>
+            <div style="font-size: 18px; color: {pnl_color};">PNL: ${total_pnl:+.2f}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col_main_2:
+        # Metriche temporali
+        cols = st.columns(6)
+        timeframes = {
+            "12H": 12, "24H": 24, "3GG": 72, 
+            "7GG": 168, "14GG": 336, "30GG": 720
+        }
+        
+        for i, (label, hours) in enumerate(timeframes.items()):
+            delta = calculate_pnl_change(df_balance, hours)
+            color = "#00FF00" if delta >= 0 else "#FF4444"
+            with cols[i]:
+                st.markdown(f"""
+                <div style="text-align: center; background: #262730; padding: 10px; border-radius: 5px;">
+                    <div style="color: #aaa; font-size: 12px;">{label}</div>
+                    <div style="color: {color}; font-weight: bold;">${delta:+.2f}</div>
+                </div>
+                """, unsafe_allow_html=True)
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric("💰 Saldo Attuale", f"${current_balance:,.2f}")
-        col2.metric("📈 PnL Totale", f"${pnl:,.2f}", f"{pnl_pct:.2f}%")
-        col3.metric("🔢 Operazioni Registrate", len(df_ops))
+    # --- SEZIONE 2: GRAFICO EQUITY ---
+    st.subheader("📈 EQUITY CURVE")
+    fig = px.area(df_balance, x='created_at', y='balance_usd', template='plotly_dark')
+    fig.update_traces(line_color=BATMAN_YELLOW, fill_color='rgba(245, 197, 24, 0.1)')
+    fig.update_layout(height=350, margin=dict(l=0, r=0, t=10, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+    st.plotly_chart(fig, use_container_width=True)
 
-    # --- GRAFICO SALDO ---
-    st.subheader("Andamento Portafoglio")
-    if not df_balance.empty:
-        fig = px.line(df_balance, x='created_at', y='balance_usd', title='Curva del Saldo (Equity Curve)')
-        st.plotly_chart(fig, use_container_width=True)
+    # --- SEZIONE 3: POSIZIONI APERTE ---
+    st.subheader("⚔️ POSIZIONI ATTIVE")
+    if not df_positions.empty:
+        cols_pos = st.columns(3)
+        for idx, row in df_positions.iterrows():
+            # Estrattore PnL sicuro
+            pnl = row.get('pnl_usd', 0)
+            symbol = row.get('symbol', 'UNKNOWN')
+            side = row.get('side', 'N/A').upper()
+            size = row.get('size', 0)
+            leverage = row.get('leverage', 'N/A')
+            
+            # Recupera ragionamento se disponibile nel raw_payload
+            raw_data = row.get('raw_payload')
+            reasoning = "Analisi in corso..."
+            if isinstance(raw_data, dict):
+                 reasoning = raw_data.get('reason', reasoning)
+            elif isinstance(raw_data, str):
+                try:
+                    js = json.loads(raw_data)
+                    reasoning = js.get('reason', reasoning)
+                except: pass
+
+            card_color = "border-left: 5px solid #00FF00;" if pnl >= 0 else "border-left: 5px solid #FF4444;"
+            
+            with cols_pos[idx % 3]:
+                st.markdown(f"""
+                <div style="background-color: #1E1E1E; padding: 15px; border-radius: 5px; margin-bottom: 10px; {card_color}">
+                    <h3 style="margin:0; color: white !important;">{symbol} <span style="font-size:12px; color:#888;">{side} x{leverage}</span></h3>
+                    <div style="font-size: 24px; font-weight: bold; margin-top: 5px;">${pnl:+.2f}</div>
+                    <hr style="border-color: #333;">
+                    <div style="font-size: 12px; color: #ccc; font-style: italic;">"{reasoning}"</div>
+                </div>
+                """, unsafe_allow_html=True)
     else:
-        st.info("Nessun dato sul saldo ancora disponibile.")
+        st.info("Nessuna posizione aperta al momento. Batman è in sorveglianza.")
 
-    # --- TABELLE ---
-    tab1, tab2 = st.tabs(["📝 Storico Operazioni", "⚠️ Log Errori"])
+    # --- SEZIONE 4: STORICO OPERAZIONI ---
+    st.subheader(f"🗃️ LOG MISSIONI (Totale: {len(df_ops)})")
+    
+    if not df_ops.empty:
+        # Tabella personalizzata
+        for index, row in df_ops.head(100).iterrows():
+            raw_payload = row['raw_payload']
+            reason = "N/A"
+            
+            # Parsing JSON per trovare il motivo
+            try:
+                if isinstance(raw_payload, str):
+                    data = json.loads(raw_payload)
+                else:
+                    data = raw_payload
+                
+                # Cerchiamo campi comuni di "pensiero"
+                reason = data.get('reason') or data.get('thought') or data.get('rationale') or "Nessun ragionamento salvato"
+            except:
+                reason = "Errore lettura dati"
 
-    with tab1:
-        st.subheader("Ultime Operazioni Eseguite")
-        if not df_ops.empty:
-            st.dataframe(df_ops, use_container_width=True)
-        else:
-            st.write("Nessuna operazione trovata.")
+            # Colori per direzione
+            direction = row['direction'].upper()
+            dir_color = "green" if "LONG" in direction else "red"
+            
+            with st.expander(f"{row['created_at'].strftime('%d/%m %H:%M')} | {row['symbol']} | :{dir_color}[{direction}]"):
+                st.markdown(f"**Leverage:** x{row['leverage']}")
+                st.markdown(f"**Allocazione:** {float(row['target_portion_of_balance'])*100:.1f}% del portafoglio")
+                st.markdown("### 🧠 Bruce's Reasoning:")
+                st.info(reason)
+                st.markdown("---")
+                st.json(raw_payload) # Mostra i dati grezzi per debug
+    else:
+        st.write("Nessuna operazione registrata.")
 
-    with tab2:
-        st.subheader("Errori di Sistema")
-        if not df_errors.empty:
-            st.dataframe(df_errors, use_container_width=True)
-        else:
-            st.success("Nessun errore recente! Il sistema è sano.")
+else:
+    st.warning("⚠️ Database vuoto o non raggiungibile. In attesa del primo segnale.")
 
-except Exception as e:
-    st.error(f"Errore di connessione al Database: {e}")
-    st.write("Assicurati che la variabile DATABASE_URL sia impostata correttamente.")
+# Footer
+st.markdown("<br><br><div style='text-align: center; color: #555;'>Made with Wayne Tech Enterprise Systems</div>", unsafe_allow_html=True)
