@@ -140,7 +140,7 @@ if not df_balance.empty:
     # --- SEZIONE 2: GRAFICO EQUITY ---
     st.subheader("📈 EQUITY CURVE")
     fig = px.area(df_balance, x='created_at', y='balance_usd', template='plotly_dark')
-    fig.update_traces(line_color=BATMAN_YELLOW, fill_color='rgba(245, 197, 24, 0.1)')
+    fig.update_traces(line_color=BATMAN_YELLOW, fillcolor='rgba(245, 197, 24, 0.1)')
     fig.update_layout(height=350, margin=dict(l=0, r=0, t=10, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
     st.plotly_chart(fig, use_container_width=True)
 
