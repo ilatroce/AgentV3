@@ -19,7 +19,7 @@ LOOP_SPEED = 15        # Controllo ogni 15 secondi
 
 # Money Management
 TOTAL_ALLOCATION_USD = 25.0   # Capitale Reale usato
-LEVERAGE = 20                 # Leva 20x
+LEVERAGE = 25                 # Leva 20x
 GRID_LINES = 52               # 52 Linee
 RANGE_PCT = 0.01              # Range +/- 1%
 
