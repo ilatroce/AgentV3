@@ -152,12 +152,12 @@ def run_barry():
                 if current_level_index > 0: # Prezzo salito -> SHORT
                     direction = "SHORT"
                     print(f"🔴 [GRID SELL] Tocco Linea +{current_level_index} @ {current_price:.4f}")
-                    # bot.execute_order(TICKER, "SHORT", bullet_size_usd) # Scommenta per LIVE
+                    bot.execute_order(TICKER, "SHORT", bullet_size_usd) # Scommenta per LIVE
                     
                 else: # Prezzo sceso -> LONG
                     direction = "LONG"
                     print(f"🟢 [GRID BUY] Tocco Linea {current_level_index} @ {current_price:.4f}")
-                    # bot.execute_order(TICKER, "LONG", bullet_size_usd) # Scommenta per LIVE
+                    bot.execute_order(TICKER, "LONG", bullet_size_usd) # Scommenta per LIVE
 
                 # Segniamo il livello come fatto
                 triggered_levels.add(current_level_index)
