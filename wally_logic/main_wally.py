@@ -18,8 +18,8 @@ TICKER = "AVAX"        # Asset diverso per non disturbare Barry
 LOOP_SPEED = 5         # Controllo veloce
 
 # Money Management
-TOTAL_ALLOCATION_USD = 20.0   # Budget per il test
-LEVERAGE = 20                 # Ricorda di impostare 20x su Hyperliquid per AVAX!
+TOTAL_ALLOCATION_USD = 25.0   # Budget per il test
+LEVERAGE = 25                 # Ricorda di impostare 20x su Hyperliquid per AVAX!
 GRID_LINES = 52               # 52 Linee
 RANGE_PCT = 0.01              # Range +/- 1%
 
