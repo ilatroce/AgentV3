@@ -18,10 +18,11 @@ ALLOCATION_BRUCE = 20.00
 ALLOCATION_BARRY = 6.97
 
 # --- PALETTE COLORI HAPPY HARBOR ---
-BG_COLOR = "#E0F2F1"      # Verde acqua chiarissimo
+BG_COLOR = "#4B8056"      # Verde scuro (dal logo)
 SIDEBAR_COLOR = "#00695C" # Verde petrolio
 CARD_WHITE = "#FFFFFF"
 TEXT_DARK = "#263238"
+TEXT_ON_BG = "#FFFFFF"    # Testo su sfondo scuro
 ACCENT_GREEN = "#00C853"  # Profit
 ACCENT_RED = "#D50000"    # Loss
 
@@ -38,7 +39,7 @@ st.set_page_config(page_title="Happy Harbor", page_icon="⚓", layout="wide", in
 st.markdown(f"""
     <style>
     /* Sfondo App */
-    .stApp {{ background-color: {BG_COLOR}; color: {TEXT_DARK}; }}
+    .stApp {{ background-color: {BG_COLOR}; color: {TEXT_ON_BG}; }}
     
     /* Sidebar */
     section[data-testid="stSidebar"] {{ background-color: {SIDEBAR_COLOR}; }}
@@ -53,6 +54,7 @@ st.markdown(f"""
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         margin-bottom: 10px;
     }}
+    .time-card div {{ color: {TEXT_DARK}; }}
     
     /* Card Principali */
     .main-card {{
@@ -61,6 +63,7 @@ st.markdown(f"""
         border-radius: 15px;
         box-shadow: 0 4px 8px rgba(0,0,0,0.1);
         margin-bottom: 20px;
+        color: {TEXT_DARK};
     }}
     
     /* Badge Operazioni */
@@ -72,7 +75,12 @@ st.markdown(f"""
         color: white;
     }}
     
-    h1, h2, h3 {{ color: {TEXT_DARK} !important; font-family: 'Segoe UI', sans-serif; }}
+    h1, h2, h3 {{ color: {TEXT_ON_BG} !important; font-family: 'Segoe UI', sans-serif; }}
+
+    /* Eccezione: Header dentro le card dovrebbero essere scuri?
+       In genere st.subheader è fuori. Se mettiamo html dentro card, usiamo stile inline.
+    */
+
     </style>
     """, unsafe_allow_html=True)
 
@@ -106,8 +114,15 @@ def load_data():
                 try:
                     p = row['raw_payload']
                     if isinstance(p, str): p = json.loads(p)
-                    if isinstance(p, dict): return p.get('agent', 'Bruce')
+                    if isinstance(p, dict):
+                        if 'agent' in p: return p['agent']
                 except: pass
+
+                # 3. Inferenza da Simbolo
+                sym = row.get('symbol', '')
+                if sym == 'SUI': return 'Barry'
+                if sym in ['BTC', 'ETH', 'SOL']: return 'Bruce'
+
                 return 'Bruce' # Default
 
             if not df_ops.empty:
@@ -160,7 +175,7 @@ def get_virtual_equity(agent_name, initial, df_ops):
             except: pass
         curr += pnl
         points.append({"time": row['created_at'], "equity": curr})
-        
+
     return pd.DataFrame(points)
 
 # --- UI COMPONENTS ---
@@ -276,7 +291,42 @@ if page == "Overview 🌐":
         fig = px.area(df_bal, x='created_at', y='balance_usd')
         fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=300, margin=dict(l=0,r=0,t=0,b=0))
         fig.update_traces(line_color=THEME['Global']['primary'], fillcolor=THEME['Global']['light'])
-        st.plotly_chart(fig, use_container_width=True) # Aggiornato per evitare warning
+        fig.update_xaxes(showgrid=False, color=TEXT_ON_BG)
+        fig.update_yaxes(showgrid=True, color=TEXT_ON_BG)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # 4. CONFRONTO PERCENTUALE BOT
+    st.subheader("🆚 Performance Bot a Confronto (%)")
+
+    # Calcolo curve
+    eq_bruce = get_virtual_equity("Bruce", ALLOCATION_BRUCE, df_ops)
+    eq_barry = get_virtual_equity("Barry", ALLOCATION_BARRY, df_ops)
+
+    if not eq_bruce.empty and not eq_barry.empty:
+        # Normalizzazione
+        eq_bruce['pct_change'] = (eq_bruce['equity'] - ALLOCATION_BRUCE) / ALLOCATION_BRUCE * 100
+        eq_barry['pct_change'] = (eq_barry['equity'] - ALLOCATION_BARRY) / ALLOCATION_BARRY * 100
+
+        # Merge per grafico unico (approssimato per semplicità: uniamo i punti)
+        eq_bruce['Agent'] = 'Bruce'
+        eq_barry['Agent'] = 'Barry'
+        df_compare = pd.concat([eq_bruce, eq_barry])
+
+        fig_comp = px.line(df_compare, x='time', y='pct_change', color='Agent',
+                           color_discrete_map={'Bruce': THEME['Bruce']['primary'], 'Barry': THEME['Barry']['primary']})
+        fig_comp.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            height=300,
+            margin=dict(l=0,r=0,t=20,b=0),
+            legend=dict(font=dict(color=TEXT_ON_BG))
+        )
+        fig_comp.update_xaxes(color=TEXT_ON_BG)
+        fig_comp.update_yaxes(color=TEXT_ON_BG, title="Crescita %")
+        st.plotly_chart(fig_comp, use_container_width=True)
+    else:
+        st.info("Dati insufficienti per il confronto performance.")
+
 
 # --- PAGINE AGENTI (BRUCE / BARRY) ---
 else:
@@ -289,7 +339,21 @@ else:
     
     # Dati Agente
     df_equity = get_virtual_equity(agent, alloc, df_ops)
-    curr_virt = df_equity.iloc[-1]['equity'] if not df_equity.empty else alloc
+
+    # Calcolo Saldo Virtuale + Unrealized PnL
+    # 1. Realized PnL Base
+    curr_virt_base = df_equity.iloc[-1]['equity'] if not df_equity.empty else alloc
+
+    # 2. Unrealized PnL (Open Positions)
+    relevant_syms = ['BTC', 'ETH', 'SOL'] if agent == 'Bruce' else ['SUI']
+    unrealized_pnl = 0.0
+    if not df_pos.empty:
+        agent_pos = df_pos[df_pos['symbol'].isin(relevant_syms)]
+        if not agent_pos.empty:
+            unrealized_pnl = agent_pos['pnl_usd'].sum()
+
+    # Totale
+    curr_virt = curr_virt_base + unrealized_pnl
     virt_pnl = curr_virt - alloc
     virt_pct = (virt_pnl / alloc * 100)
     
@@ -303,6 +367,9 @@ else:
             <div style="color: {ACCENT_GREEN if virt_pnl>=0 else ACCENT_RED}; font-weight: bold;">
                 {virt_pnl:+.2f} ({virt_pct:+.2f}%)
             </div>
+            <div style="font-size: 11px; color: #777; margin-top:5px;">
+                (Include PnL non realizzato: ${unrealized_pnl:+.2f})
+            </div>
             <hr>
             <div style="font-size: 12px;">Allocazione Iniziale: ${alloc:,.2f}</div>
         </div>
@@ -310,14 +377,15 @@ else:
         
     with col2:
         if not df_equity.empty:
-            fig = px.line(df_equity, x='time', y='equity', title="Performance Virtuale")
+            fig = px.line(df_equity, x='time', y='equity', title="Performance Virtuale (Realized)")
             fig.update_traces(line_color=t['primary'], line_width=3)
             fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=220, margin=dict(l=0,r=0,t=30,b=0))
+            fig.update_xaxes(color=TEXT_ON_BG)
+            fig.update_yaxes(color=TEXT_ON_BG)
             st.plotly_chart(fig, use_container_width=True) # Aggiornato
 
     # Posizioni Attive
     st.subheader(f"⚔️ Posizioni Attive ({agent})")
-    relevant_syms = ['BTC', 'ETH', 'SOL'] if agent == 'Bruce' else ['SOL']
     
     my_pos = df_pos[df_pos['symbol'].isin(relevant_syms)] if not df_pos.empty else pd.DataFrame()
     
