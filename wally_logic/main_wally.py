@@ -134,12 +134,12 @@ def run_wally():
                 is_profit = False
                 # SHORT: Chiude se prezzo scende (indice minore)
                 if lvl_idx > 0:
-                    if current_idx < lvl_idx: 
+                    if current_idx < (lvl_idx - 2): 
                         is_profit = True
                         close_dir = "LONG"
                 # LONG: Chiude se prezzo sale (indice maggiore)
                 elif lvl_idx < 0:
-                    if current_idx > lvl_idx: 
+                    if current_idx > (lvl_idx + 2): 
                         is_profit = True
                         close_dir = "SHORT"
 
