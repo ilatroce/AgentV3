@@ -15,7 +15,7 @@ load_dotenv()
 
 # --- CONFIGURAZIONE MM BARRY ---
 AGENT_NAME = "Barry"
-TICKER = "SOL"         
+TICKER = "SUI"         
 LOOP_SPEED = 15        
 
 # Money Management
