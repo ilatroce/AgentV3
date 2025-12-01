@@ -335,6 +335,15 @@ class HyperLiquidTrader:
             print(f"  Only Isolated: {perp.get('onlyIsolated', False)}")
 
     # --- Barry part ---
+    # --- Parte per il bot ---
+    def get_market_price(self, ticker: str):
+        """Helper veloce per prendere solo il prezzo (Fondamentale per Barry)"""
+        try:
+            price_data = self.info.all_mids()
+            return float(price_data.get(ticker, 0.0))
+        except Exception as e:
+            print(f"Errore recupero prezzo: {e}")
+            return 0.0
     def get_candles(self, coin: str, interval: str = "15m", limit: int = 50):
         """
         Scarica le candele storiche per Barry.
