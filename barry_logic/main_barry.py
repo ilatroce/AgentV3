@@ -18,7 +18,7 @@ TICKER = "SUI"
 LOOP_SPEED = 15        # Controllo ogni 15 secondi
 
 # Money Management
-TOTAL_ALLOCATION_USD = 5.0   # Capitale Reale usato
+TOTAL_ALLOCATION_USD = 25.0   # Capitale Reale usato
 LEVERAGE = 20                # Leva 20x NECESSARIA per 52 linee
 GRID_LINES = 52              # Numero totale di linee nella griglia
 RANGE_PCT = 0.01             # Range operativo (+/- 1%)
