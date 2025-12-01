@@ -344,6 +344,35 @@ class HyperLiquidTrader:
         except Exception as e:
             print(f"Errore recupero prezzo: {e}")
             return 0.0
+    # --- Funzione per eseguire gli ordini ---
+    def execute_order(self, ticker: str, side: str, size_usd: float):
+        """Esegue ordine market (Apre o Chiude parzialmente)"""
+        try:
+            # 1. Prezzo attuale
+            price = self.get_market_price(ticker)
+            if price == 0: 
+                print(f"Prezzo {ticker} non trovato.")
+                return None
+            
+            # 2. Calcolo Quantità
+            # Arrotondamento a 4 decimali per sicurezza su SUI/SOL
+            amount = round(size_usd / price, 4)
+            if amount <= 0:
+                print(f"Quantità troppo piccola: {amount}")
+                return None
+
+            is_buy = True if side.upper() == "LONG" else False
+            
+            print(f"[EXEC] {side} {ticker} | ${size_usd:.2f} ({amount} coin) @ {price}")
+            
+            # 3. Invio a Hyperliquid
+            # slippage 5% (0.05) per essere sicuri che entri a mercato
+            return self.exchange.market_open(ticker, is_buy, amount, price, 0.05)
+            
+        except Exception as e:
+            print(f"Errore execute_order: {e}")
+            return None
+    # -------------------------------------------
     def get_candles(self, coin: str, interval: str = "15m", limit: int = 50):
         """
         Scarica le candele storiche per Barry.
