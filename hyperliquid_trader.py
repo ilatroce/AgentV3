@@ -346,56 +346,55 @@ class HyperLiquidTrader:
             return 0.0
     # --- Funzione per eseguire gli ordini ---
     def execute_order(self, ticker: str, side: str, size_usd: float):
-        """Esegue ordine market con DEBUG PROFONDO"""
-        print(f"\n🔍 [DEBUG ORDINE] Inizio procedura per: {ticker} {side}")
-        print(f"   Input Size USD: ${size_usd}")
+        """Esegue ordine market con FIX PRECISIONE SUI"""
+        print(f"\n🔍 [DEBUG] Tentativo ordine: {ticker} {side} ${size_usd:.2f}")
         
         try:
-            # 1. Recupero Prezzo
             price = self.get_market_price(ticker)
-            print(f"   1. Prezzo rilevato: {price}")
+            if price == 0: return None
             
-            if price == 0: 
-                print("❌ ERRORE: Prezzo 0. Abort.")
-                return None
-            
-            # 2. Calcolo Quantità
-            # SUI vale circa 1.5$. Se ordiniamo 10$, sono circa 6.6 SUI.
-            # Arrotondiamo a 2 decimali per sicurezza (molti exchange odiano troppi decimali su coin piccole)
             raw_amount = size_usd / price
-            amount = float(f"{raw_amount:.2f}") # Forza 2 decimali (es. 6.66)
             
-            print(f"   2. Quantità calcolata: {raw_amount} -> Arrotondata: {amount}")
+            # --- FIX PRECISIONE ---
+            # SUI accetta solitamente 1 decimale. 
+            # Esempio: 7.2543 -> 7.2
+            amount = float(f"{raw_amount:.1f}")
             
             if amount <= 0:
-                print("❌ ERRORE: Quantità risultante è 0 o negativa.")
+                print("❌ ERRORE: Quantità troppo piccola dopo arrotondamento.")
                 return None
 
             is_buy = True if side.upper() == "LONG" else False
             
-            print(f"🚀 [EXEC] Sto inviando a Hyperliquid: {side} {amount} {ticker} @ {price}")
+            print(f"🚀 [EXEC] Invio: {amount} {ticker} (Arrotondato da {raw_amount:.4f})")
             
-            # 3. Invio Ordine
-            # Slippage 5% (0.05)
             order_result = self.exchange.market_open(ticker, is_buy, amount, price, 0.05)
             
-            # 4. STAMPA LA RISPOSTA VERA (Qui capiremo il problema)
-            print(f"📩 [RISPOSTA API GREGGIA]: {order_result}")
+            # --- CONTROLLO RISPOSTA PROFONDO ---
+            # Hyperliquid ritorna status:'ok' anche se l'ordine fallisce logicamente.
+            # Bisogna guardare dentro 'response' -> 'data' -> 'statuses'
             
-            if order_result["status"] == "ok":
-                print(f"✅ [SUCCESSO] Ordine piazzato!")
+            is_error = False
+            error_msg = ""
+            
+            try:
+                # Navighiamo nel JSON annidato per cercare errori
+                statuses = order_result.get('response', {}).get('data', {}).get('statuses', [])
+                if statuses and 'error' in statuses[0]:
+                    is_error = True
+                    error_msg = statuses[0]['error']
+            except:
+                pass # Struttura imprevista, ci fidiamo dello status esterno
+
+            if order_result["status"] == "ok" and not is_error:
+                print(f"✅ [SUCCESSO] Ordine Eseguito!")
                 return order_result
             else:
-                print(f"⚠️ [RIFIUTATO] Hyperliquid ha detto NO.")
-                # Se c'è un messaggio di errore specifico nel dizionario, stampiamolo
-                if 'response' in order_result:
-                    print(f"   Dettaglio: {order_result['response']}")
+                print(f"❌ [FALLITO] Motivo: {error_msg if is_error else order_result}")
                 return None
                 
         except Exception as e:
-            print(f"❌ [CRASH INTERNO]: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ [CRASH]: {e}")
             return None
     # -------------------------------------------
     def get_candles(self, coin: str, interval: str = "15m", limit: int = 50):
