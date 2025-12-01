@@ -76,9 +76,8 @@ def run_barry():
 
     while True:
         try:
-            # 1. Scarica Dati (Servono almeno 20 candele per la media volume)
+            # 1. Scarica Dati
             candles = bot.get_candles(TICKER, interval="15m", limit=25)
-            
             if candles.empty:
                 time.sleep(5)
                 continue
@@ -88,96 +87,96 @@ def run_barry():
             # --- GATEKEEPER CHECK 🛡️ ---
             is_safe, market_status = check_market_conditions(candles)
             
-            # Se il mercato è pericoloso, Barry va in modalità "Bunker"
+            # Qui sta la differenza: NON usiamo 'continue'. Usiamo una variabile (flag).
+            trading_is_allowed = True
+            
             if not is_safe:
-                print(f"⛔ [GATEKEEPER] Trading in PAUSA: {market_status}")
-                print(f"   Prezzo: {current_price:.4f} | Attendo che la tempesta passi...")
-                
-                # Se il mercato è folle, potremmo voler resettare la griglia futura
-                # ma manteniamo le posizioni aperte per gestirle (o chiuderle se toccano SL)
-                # Per ora: NON APRIAMO NUOVI ORDINI.
-                time.sleep(60) # Pausa lunga (1 minuto)
-                continue # Salta tutto e ricomincia il giro
+                print(f"⛔ [GATEKEEPER] Market ALERT: {market_status}. Blocco nuove entrate.")
+                trading_is_allowed = False # Impediamo nuovi acquisti, ma il codice prosegue!
             
-            # Se arriviamo qui, il mercato è SAFE. Procediamo.
-            
-            # 2. Inizializzazione Griglia
+            # 2. Inizializzazione (Recupero posizione attuale)
             account = bot.get_account_status()
             positions = account.get("open_positions", [])
             my_pos = next((p for p in positions if p["symbol"] == TICKER), None)
             
+            # Setup Centro Griglia (Solo se trading è permesso o abbiamo già posizioni da gestire)
             if not my_pos:
-                if center_price is None or abs(current_price - center_price) / center_price > 0.01:
-                    center_price = current_price
-                    active_grid_orders = [] 
-                    print(f"⚡ [Barry MM] Griglia resettata. Nuovo Centro: ${center_price:.4f}")
+                if trading_is_allowed: # Resetta il centro solo se il mercato è calmo
+                    if center_price is None or abs(current_price - center_price) / center_price > 0.01:
+                        center_price = current_price
+                        active_grid_orders = [] 
+                        print(f"⚡ [Barry MM] Griglia resettata. Nuovo Centro: ${center_price:.4f}")
             else:
                 if center_price is None:
                     center_price = float(my_pos['entry_price'])
 
-            # 3. Logica MM
-            print(f"\n⚡ [Barry MM] Status: {market_status} | P: {current_price:.4f} | C: {center_price:.4f}")
-            
+            # Se siamo in PAUSA e non abbiamo posizioni, saltiamo il resto e dormiamo
+            if not trading_is_allowed and not my_pos:
+                print(f"   Prezzo: {current_price:.4f} | Nessuna posizione aperta. Attendo la calma.")
+                time.sleep(15)
+                continue
+
+            # Se siamo qui, o il mercato è Safe, O abbiamo una posizione da gestire (anche se Unsafe)
             pnl_usd = float(my_pos['pnl_usd']) if my_pos else 0.0
-            
-            # --- AZIONE 1: GRID BUY ---
-            levels = get_grid_levels(center_price)
-            
-            for lvl in levels:
-                if current_price <= lvl['price'] and lvl['id'] not in active_grid_orders:
-                    print(f"⚡ [GRID] Buy Level {lvl['id']}")
-                    bullet_size_usd = (TOTAL_ALLOCATION_USD * LEVERAGE) / GRID_LEVELS
-                    
-                    # bot.execute_order(TICKER, "LONG", bullet_size_usd) # Scommenta per LIVE
-                    
-                    active_grid_orders.append(lvl['id'])
-                    
-                    payload = {
-                        "operation": "OPEN", "symbol": TICKER, "direction": "LONG",
-                        "reason": f"Grid Level {lvl['id']} Hit", "agent": AGENT_NAME,
-                        "target_portion_of_balance": (bullet_size_usd/LEVERAGE)/float(account['balance_usd'])
-                    }
-                    db_utils.log_bot_operation(payload)
-                    time.sleep(1)
+            print(f"\n⚡ [Barry MM] Safe: {is_safe} | P: {current_price:.4f} | PnL: ${pnl_usd:.2f}")
 
-            # --- AZIONE 2: GRID SELL ---
-            for lvl_id in active_grid_orders[:]: 
-                lvl_price = next(l['price'] for l in levels if l['id'] == lvl_id)
-                take_profit_price = lvl_price * (1 + GRID_STEP_PCT)
+            # --- AZIONE 1: GRID BUY (Accumulo) ---
+            # Questo lo facciamo SOLO se il Gatekeeper dice che è Safe
+            if trading_is_allowed:
+                levels = get_grid_levels(center_price)
+                for lvl in levels:
+                    if current_price <= lvl['price'] and lvl['id'] not in active_grid_orders:
+                        print(f"⚡ [GRID] Buy Level {lvl['id']}")
+                        bullet_size_usd = (TOTAL_ALLOCATION_USD * LEVERAGE) / GRID_LEVELS
+                        
+                        # bot.execute_order(TICKER, "LONG", bullet_size_usd) # Scommenta per LIVE
+                        
+                        active_grid_orders.append(lvl['id'])
+                        payload = {
+                            "operation": "OPEN", "symbol": TICKER, "direction": "LONG",
+                            "reason": f"Grid Level {lvl['id']} Hit", "agent": AGENT_NAME,
+                            "target_portion_of_balance": (bullet_size_usd/LEVERAGE)/float(account['balance_usd'])
+                        }
+                        db_utils.log_bot_operation(payload)
+                        time.sleep(1)
+            else:
+                # Se il mercato è pericoloso, non compriamo nulla.
+                pass
+
+            # --- AZIONE 2: GRID SELL (Take Profit) ---
+            # Questo lo lasciamo SEMPRE attivo. Se il prezzo rimbalza durante la tempesta, vendiamo!
+            if my_pos: # Solo se abbiamo roba da vendere
+                levels = get_grid_levels(center_price) # Ricalcoliamo i livelli basati sul centro vecchio
+                for lvl_id in active_grid_orders[:]: 
+                    # ... (codice identico a prima per la vendita) ...
+                    # Qui copio la logica di vendita che avevamo:
+                    lvl_price = next((l['price'] for l in levels if l['id'] == lvl_id), None)
+                    if lvl_price:
+                        take_profit_price = lvl_price * (1 + GRID_STEP_PCT)
+                        if current_price >= take_profit_price:
+                            print(f"⚡ [GRID] Profit Level {lvl_id} (Anche durante storm)!")
+                            bullet_size_usd = (TOTAL_ALLOCATION_USD * LEVERAGE) / GRID_LEVELS
+                            # bot.execute_order(TICKER, "SHORT", bullet_size_usd) 
+                            active_grid_orders.remove(lvl_id)
+                            # Log...
+
+            # --- AZIONE 3: SAFETY STOP (CRUCIALE) ---
+            # Questo DEVE essere eseguito SEMPRE, specialmente se il Gatekeeper è attivo!
+            if my_pos and center_price:
+                levels = get_grid_levels(center_price)
+                stop_price = center_price * (1 - STOP_LOSS_GRID_PCT)
                 
-                if current_price >= take_profit_price:
-                    print(f"⚡ [GRID] Profit Level {lvl_id}!")
-                    bullet_size_usd = (TOTAL_ALLOCATION_USD * LEVERAGE) / GRID_LEVELS
+                # Se Gatekeeper è attivo (Tempesta), magari stringiamo lo stop loss?
+                # Per ora lasciamolo standard:
+                if current_price < stop_price:
+                    print("⚡ [CRITICAL] STOP LOSS TOTALE ATTIVATO.")
+                    # bot.close_position(TICKER) # CHIUDI TUTTO
                     
-                    # bot.execute_order(TICKER, "SHORT", bullet_size_usd) # Scommenta per LIVE
-                    
-                    active_grid_orders.remove(lvl_id)
-                    
-                    step_profit = bullet_size_usd * GRID_STEP_PCT
-                    payload = {
-                        "operation": "CLOSE_PARTIAL", "symbol": TICKER, "agent": AGENT_NAME,
-                        "reason": f"Grid Level {lvl_id} Recovered", "pnl": step_profit
-                    }
+                    payload = {"operation": "CLOSE", "symbol": TICKER, "reason": "Grid Broken - Stop Loss", "pnl": pnl_usd, "agent": AGENT_NAME}
                     db_utils.log_bot_operation(payload)
-
-            # --- AZIONE 3: SAFETY STOP ---
-            last_level_price = levels[-1]['price']
-            stop_price = center_price * (1 - STOP_LOSS_GRID_PCT)
-            
-            if my_pos and current_price < stop_price:
-                print("⚡ [CRITICAL] STOP LOSS TOTALE.")
-                # bot.close_position(TICKER) # Scommenta per LIVE
-                
-                payload = {"operation": "CLOSE", "symbol": TICKER, "reason": "Grid Broken - Stop Loss", "pnl": pnl_usd, "agent": AGENT_NAME}
-                db_utils.log_bot_operation(payload)
-                center_price = None
-                active_grid_orders = []
-                time.sleep(60)
-
-            # Reset se posizione chiusa esternamente
-            if not my_pos and len(active_grid_orders) > 0:
-                active_grid_orders = []
-                center_price = None
+                    center_price = None
+                    active_grid_orders = []
+                    time.sleep(60)
 
         except Exception as e:
             print(f"Errore MM: {e}")
