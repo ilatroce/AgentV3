@@ -333,3 +333,57 @@ class HyperLiquidTrader:
             print(f"  Price Decimals: {perp.get('pxDecimals', 'N/A')}")
             print(f"  Max Leverage: {perp.get('maxLeverage', 'N/A')}")
             print(f"  Only Isolated: {perp.get('onlyIsolated', False)}")
+
+    # --- Barry part ---
+    def get_candles(self, coin: str, interval: str = "15m", limit: int = 50):
+        """
+        Scarica le candele storiche per Barry.
+        interval: '1m', '5m', '15m', '1h', '4h', '1d'
+        """
+        import requests
+        import pandas as pd
+        import time
+        
+        url = "https://api.hyperliquid.xyz/info"
+        headers = {"Content-Type": "application/json"}
+        
+        data = {
+            "type": "candleSnapshot",
+            "req": {
+                "coin": coin,
+                "interval": interval,
+                "startTime": 0, 
+                "endTime": int(time.time() * 1000)
+            }
+        }
+        
+        try:
+            response = requests.post(url, json=data, headers=headers)
+            if response.status_code == 200:
+                raw_data = response.json()
+                if not raw_data: return pd.DataFrame()
+
+                # Hyperliquid restituisce dicts: {'t': 123, 'o': '1.0', ...}
+                df = pd.DataFrame(raw_data)
+                
+                # Rinomina colonne (Time, Open, High, Low, Close, Volume)
+                df = df.rename(columns={
+                    "t": "timestamp", 
+                    "o": "open", 
+                    "h": "high", 
+                    "l": "low", 
+                    "c": "close", 
+                    "v": "volume"
+                })
+                
+                # Converti stringhe in numeri
+                numeric_cols = ['open', 'high', 'low', 'close', 'volume']
+                df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric)
+                
+                return df.tail(limit)
+            else:
+                print(f"Errore API Candele: {response.text}")
+                return pd.DataFrame()
+        except Exception as e:
+            print(f"Eccezione get_candles: {e}")
+            return pd.DataFrame()
