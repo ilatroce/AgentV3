@@ -396,6 +396,16 @@ class HyperLiquidTrader:
         except Exception as e:
             print(f"❌ [CRASH]: {e}")
             return None
+    # --- Chiudi tutto ---
+    def close_position(self, ticker: str):
+        """Chiude interamente una posizione su un ticker"""
+        try:
+            print(f"[CLOSE] Chiusura Totale {ticker}...")
+            # market_close è una funzione helper dell'SDK di Hyperliquid
+            return self.exchange.market_close(ticker)
+        except Exception as e:
+            print(f"Errore close_position: {e}")
+            return None
     # -------------------------------------------
     def get_candles(self, coin: str, interval: str = "15m", limit: int = 50):
         """
