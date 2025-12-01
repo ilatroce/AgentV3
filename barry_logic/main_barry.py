@@ -3,165 +3,187 @@ import os
 import time
 import pandas as pd
 import traceback
+import math
 from dotenv import load_dotenv
 
-# Importa i moduli dalla cartella superiore (Salotto)
+# Import root modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from hyperliquid_trader import HyperLiquidTrader
 import db_utils
 
 load_dotenv()
 
-# --- CONFIGURAZIONE BARRY (THE FLASH) ---
+# --- CONFIGURAZIONE MM BARRY ---
 AGENT_NAME = "Barry"
-TICKER = "SOL"         # Barry preferisce coin veloci
-TIMEFRAME = "15m"      # Timeframe per le Bollinger
-LOOP_SPEED = 60        # Barry controlla i mercati ogni 60 secondi
-ALLOCATION_PCT = 0.05  # Barry è prudente: usa solo il 5% del saldo per trade
-BB_LENGTH = 20         # Lunghezza standard Bollinger
-BB_STD = 2.0           # Deviazione standard
+TICKER = "SOL"         
+LOOP_SPEED = 15        
 
-def calculate_bollinger(df):
-    """Calcola le bande di Bollinger sull'ultimo dato disponibile"""
-    if df.empty: return None
-    df['sma'] = df['close'].rolling(window=BB_LENGTH).mean()
-    df['std'] = df['close'].rolling(window=BB_LENGTH).std()
-    df['upper'] = df['sma'] + (df['std'] * BB_STD)
-    df['lower'] = df['sma'] - (df['std'] * BB_STD)
-    return df.iloc[-1]
+# Money Management
+TOTAL_ALLOCATION_USD = 5.0  
+LEVERAGE = 10               
+GRID_LEVELS = 4             
+GRID_STEP_PCT = 0.006       
+STOP_LOSS_GRID_PCT = 0.04   
+
+# --- CONFIGURAZIONE FILTRI VOLATILITÀ (GATEKEEPER) ---
+# Se succede una di queste cose, Barry si ferma:
+MAX_RVOL = 2.0         # Se il volume è > 2.0x (200%) della media -> STOP
+MAX_CANDLE_SIZE = 0.01 # Se una candela si muove più dell'1% in 15m -> STOP
+
+def get_grid_levels(center_price):
+    levels = []
+    for i in range(1, GRID_LEVELS + 1):
+        price = center_price * (1 - (GRID_STEP_PCT * i))
+        levels.append({"id": i, "price": price, "type": "BUY"})
+    return levels
+
+def check_market_conditions(df):
+    """
+    Ritorna True se il mercato è CALMO (Safe).
+    Ritorna False se c'è Volatilità/Trend (Danger).
+    """
+    if df.empty or len(df) < 20: return True, "Dati insufficienti"
+
+    # 1. Controllo Volume (RVOL)
+    # Media volume ultime 20 candele
+    avg_vol = df['volume'].rolling(window=20).mean().iloc[-1]
+    curr_vol = df['volume'].iloc[-1]
+    
+    rvol = curr_vol / avg_vol if avg_vol > 0 else 1.0
+    
+    if rvol > MAX_RVOL:
+        return False, f"Volume Spike rilevato (RVOL: {rvol:.2f}x)"
+
+    # 2. Controllo Esplosione Prezzo (Big Candle)
+    open_p = df['open'].iloc[-1]
+    close_p = df['close'].iloc[-1]
+    pct_move = abs(close_p - open_p) / open_p
+    
+    if pct_move > MAX_CANDLE_SIZE:
+        return False, f"Movimento Impulsivo ({pct_move*100:.2f}%)"
+
+    return True, "Mercato Consolidato (Safe)"
 
 def run_barry():
-    print(f"⚡ [Barry] Speed Force attivata su {TICKER}...")
-    print(f"⚡ [Barry] Allocazione per trade: {ALLOCATION_PCT*100}% del saldo.")
+    print(f"⚡ [Barry MM] Inizializzazione Market Maker su {TICKER}...")
     
     private_key = os.getenv("PRIVATE_KEY")
     wallet = os.getenv("WALLET_ADDRESS").lower()
-    
-    # IMPORTANTE: testnet=False usa soldi veri!
-    bot = HyperLiquidTrader(private_key, wallet, testnet=False) 
+    bot = HyperLiquidTrader(private_key, wallet, testnet=False)
+
+    center_price = None 
+    active_grid_orders = [] 
 
     while True:
         try:
-            print(f"\n⚡ [Barry] Scansiono il mercato ({time.strftime('%H:%M:%S')})...")
+            # 1. Scarica Dati (Servono almeno 20 candele per la media volume)
+            candles = bot.get_candles(TICKER, interval="15m", limit=25)
             
-            # 1. SCARICA STORICO (Necessario per Bollinger)
-            # Assicurati di aver aggiornato hyperliquid_trader.py con get_candles!
-            df_candles = bot.get_candles(TICKER, interval=TIMEFRAME, limit=50)
-            last_candle = calculate_bollinger(df_candles)
-            
-            if last_candle is None:
-                print("⚠️ Dati insufficienti per calcolare indicatori. Aspetto...")
-                time.sleep(10)
+            if candles.empty:
+                time.sleep(5)
                 continue
-
-            current_price = last_candle['close']
-            upper_band = last_candle['upper']
-            lower_band = last_candle['lower']
-            mid_band = last_candle['sma']
             
-            print(f"   Prezzo Attuale: {current_price:.4f}")
-            print(f"   Range Bollinger: {lower_band:.4f} (Low) <---> {upper_band:.4f} (High)")
-
-            # 2. CONTROLLO POSIZIONI
+            current_price = float(candles.iloc[-1]['close'])
+            
+            # --- GATEKEEPER CHECK 🛡️ ---
+            is_safe, market_status = check_market_conditions(candles)
+            
+            # Se il mercato è pericoloso, Barry va in modalità "Bunker"
+            if not is_safe:
+                print(f"⛔ [GATEKEEPER] Trading in PAUSA: {market_status}")
+                print(f"   Prezzo: {current_price:.4f} | Attendo che la tempesta passi...")
+                
+                # Se il mercato è folle, potremmo voler resettare la griglia futura
+                # ma manteniamo le posizioni aperte per gestirle (o chiuderle se toccano SL)
+                # Per ora: NON APRIAMO NUOVI ORDINI.
+                time.sleep(60) # Pausa lunga (1 minuto)
+                continue # Salta tutto e ricomincia il giro
+            
+            # Se arriviamo qui, il mercato è SAFE. Procediamo.
+            
+            # 2. Inizializzazione Griglia
             account = bot.get_account_status()
             positions = account.get("open_positions", [])
-            # Cerca se Barry ha già una posizione aperta su questo Ticker
             my_pos = next((p for p in positions if p["symbol"] == TICKER), None)
             
-            action = None
-            direction = None
-            reason = ""
-            realized_pnl = 0.0 # Fondamentale per la Dashboard
-
-            # --- STRATEGIA ---
-            
-            # CASO A: NESSUNA POSIZIONE -> Cerca un ingresso "Sniper"
             if not my_pos:
-                if current_price <= lower_band:
-                    action = "OPEN"
-                    direction = "LONG"
-                    reason = f"Grid Entry: Prezzo ha toccato la Banda Inferiore ({lower_band:.2f})"
-                elif current_price >= upper_band:
-                    action = "OPEN"
-                    direction = "SHORT"
-                    reason = f"Grid Entry: Prezzo ha toccato la Banda Superiore ({upper_band:.2f})"
-                else:
-                    print("   Nessun segnale di ingresso. Barry resta in attesa.")
-
-            # CASO B: POSIZIONE APERTA -> Gestisci l'uscita (Mean Reversion)
+                if center_price is None or abs(current_price - center_price) / center_price > 0.01:
+                    center_price = current_price
+                    active_grid_orders = [] 
+                    print(f"⚡ [Barry MM] Griglia resettata. Nuovo Centro: ${center_price:.4f}")
             else:
-                side = my_pos['side'].upper() # LONG o SHORT
-                entry = float(my_pos['entry_price'])
-                pnl = float(my_pos['pnl_usd'])
-                print(f"   Posizione Attiva: {side} | Entry: {entry} | PnL: ${pnl:.2f}")
-                
-                # Logica di Uscita: TP Dinamico alla Media Centrale
-                should_close = False
-                
-                if side == "LONG" and current_price >= mid_band:
-                    reason = f"Take Profit: Ritorno alla media ({mid_band:.2f}) completato."
-                    should_close = True
-                elif side == "SHORT" and current_price <= mid_band:
-                    reason = f"Take Profit: Ritorno alla media ({mid_band:.2f}) completato."
-                    should_close = True
-                
-                # Stop Loss di emergenza (Opzionale, es. se perdi più di 2$)
-                # if pnl < -2.0: 
-                #     reason = "Stop Loss: Emergenza attivata."
-                #     should_close = True
+                if center_price is None:
+                    center_price = float(my_pos['entry_price'])
 
-                if should_close:
-                    action = "CLOSE"
-                    direction = "FLAT"
-                    realized_pnl = pnl # Catturiamo il profitto per la Dashboard!
+            # 3. Logica MM
+            print(f"\n⚡ [Barry MM] Status: {market_status} | P: {current_price:.4f} | C: {center_price:.4f}")
+            
+            pnl_usd = float(my_pos['pnl_usd']) if my_pos else 0.0
+            
+            # --- AZIONE 1: GRID BUY ---
+            levels = get_grid_levels(center_price)
+            
+            for lvl in levels:
+                if current_price <= lvl['price'] and lvl['id'] not in active_grid_orders:
+                    print(f"⚡ [GRID] Buy Level {lvl['id']}")
+                    bullet_size_usd = (TOTAL_ALLOCATION_USD * LEVERAGE) / GRID_LEVELS
+                    
+                    # bot.execute_order(TICKER, "LONG", bullet_size_usd) # Scommenta per LIVE
+                    
+                    active_grid_orders.append(lvl['id'])
+                    
+                    payload = {
+                        "operation": "OPEN", "symbol": TICKER, "direction": "LONG",
+                        "reason": f"Grid Level {lvl['id']} Hit", "agent": AGENT_NAME,
+                        "target_portion_of_balance": (bullet_size_usd/LEVERAGE)/float(account['balance_usd'])
+                    }
+                    db_utils.log_bot_operation(payload)
+                    time.sleep(1)
 
-            # --- ESECUZIONE ORDINI ---
-            if action == "OPEN":
-                # 1. Calcola Size
-                balance = float(account.get('balance_usd', 0))
-                size_usd = balance * ALLOCATION_PCT
+            # --- AZIONE 2: GRID SELL ---
+            for lvl_id in active_grid_orders[:]: 
+                lvl_price = next(l['price'] for l in levels if l['id'] == lvl_id)
+                take_profit_price = lvl_price * (1 + GRID_STEP_PCT)
                 
-                print(f"⚡ ESEGUO OPEN {direction}: Investo ${size_usd:.2f}")
+                if current_price >= take_profit_price:
+                    print(f"⚡ [GRID] Profit Level {lvl_id}!")
+                    bullet_size_usd = (TOTAL_ALLOCATION_USD * LEVERAGE) / GRID_LEVELS
+                    
+                    # bot.execute_order(TICKER, "SHORT", bullet_size_usd) # Scommenta per LIVE
+                    
+                    active_grid_orders.remove(lvl_id)
+                    
+                    step_profit = bullet_size_usd * GRID_STEP_PCT
+                    payload = {
+                        "operation": "CLOSE_PARTIAL", "symbol": TICKER, "agent": AGENT_NAME,
+                        "reason": f"Grid Level {lvl_id} Recovered", "pnl": step_profit
+                    }
+                    db_utils.log_bot_operation(payload)
+
+            # --- AZIONE 3: SAFETY STOP ---
+            last_level_price = levels[-1]['price']
+            stop_price = center_price * (1 - STOP_LOSS_GRID_PCT)
+            
+            if my_pos and current_price < stop_price:
+                print("⚡ [CRITICAL] STOP LOSS TOTALE.")
+                # bot.close_position(TICKER) # Scommenta per LIVE
                 
-                # 2. Esegui Ordine Reale (Scommenta quando pronto)
-                # bot.execute_order(TICKER, direction, size_usd) 
-                
-                # 3. Log Database
-                payload = {
-                    "operation": "OPEN", 
-                    "symbol": TICKER, 
-                    "direction": direction, 
-                    "reason": reason,
-                    "target_portion_of_balance": ALLOCATION_PCT,
-                    "agent": AGENT_NAME 
-                }
+                payload = {"operation": "CLOSE", "symbol": TICKER, "reason": "Grid Broken - Stop Loss", "pnl": pnl_usd, "agent": AGENT_NAME}
                 db_utils.log_bot_operation(payload)
-                print("   [DB] Operazione OPEN salvata.")
+                center_price = None
+                active_grid_orders = []
+                time.sleep(60)
 
-            elif action == "CLOSE":
-                print(f"⚡ ESEGUO CLOSE: Incasso ${realized_pnl:.2f}")
-                
-                # 1. Chiudi Ordine Reale (Scommenta quando pronto)
-                # bot.close_position(TICKER)
-                
-                # 2. Log Database (CON PNL!)
-                payload = {
-                    "operation": "CLOSE", 
-                    "symbol": TICKER, 
-                    "reason": reason, 
-                    "agent": AGENT_NAME,
-                    "pnl": realized_pnl,          # <--- Per la dashboard
-                    "realized_pnl": realized_pnl  # <--- Ridondanza per sicurezza
-                }
-                db_utils.log_bot_operation(payload)
-                print("   [DB] Operazione CLOSE salvata con profitto.")
+            # Reset se posizione chiusa esternamente
+            if not my_pos and len(active_grid_orders) > 0:
+                active_grid_orders = []
+                center_price = None
 
         except Exception as e:
-            print(f"⚡ Errore nel ciclo di Barry: {e}")
+            print(f"Errore MM: {e}")
             traceback.print_exc()
-            time.sleep(10) # Pausa di sicurezza in caso di crash
-        
-        # Attesa fino al prossimo tick
+            time.sleep(5)
+            
         time.sleep(LOOP_SPEED)
 
 if __name__ == "__main__":
