@@ -13,9 +13,9 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # --- CONFIGURAZIONE REALE ---
-TOTAL_DEPOSIT = 26.97  # Il tuo deposito iniziale reale
-ALLOCATION_BRUCE = 20.00
-ALLOCATION_BARRY = 6.97
+TOTAL_DEPOSIT = 50  # Il tuo deposito iniziale reale
+ALLOCATION_BRUCE = 25.00
+ALLOCATION_BARRY = 25.00
 
 # --- PALETTE COLORI HAPPY HARBOR ---
 BG_COLOR = "#4B8056"      # Verde scuro (dal logo)
