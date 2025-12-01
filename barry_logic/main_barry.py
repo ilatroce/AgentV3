@@ -3,7 +3,6 @@ import os
 import time
 import pandas as pd
 import traceback
-import math
 from dotenv import load_dotenv
 
 # Import root modules (per trovare db_utils e trader)
@@ -27,9 +26,11 @@ GRID_RANGE_PCT = 0.04        # Copriamo il 4% di discesa
 # Calcolo Step Fisso: 4% / 50 livelli = 0.08% a scalino (ogni ~0.001$)
 STEP_PCT = GRID_RANGE_PCT / GRID_LEVELS 
 
-# Gatekeeper (Sicurezza Volatilità)
-MAX_RVOL = 3.0           # Stop se volume > 3x la media
-MAX_CANDLE_SIZE = 0.008  # Stop se candela > 0.8% in 1 minuto
+# --- GATEKEEPER INTELLIGENTE (Protezione Volatilità) ---
+# Blocca i nuovi acquisti SOLO se:
+MAX_CANDLE_SIZE = 0.008   # 1. Il prezzo si muove più dello 0.8% in 1 minuto (Crash/Pump)
+MAX_RVOL = 5.0            # 2. OPPURE il Volume è > 5x la media...
+MIN_MOVE_FOR_RVOL = 0.003 #    ...E il prezzo si è mosso almeno dello 0.3% (Filtra falsi positivi)
 
 def get_grid_levels(center_price):
     """Genera i 50 livelli di prezzo sotto il centro."""
@@ -46,26 +47,32 @@ def check_market_conditions(df):
     """
     if df.empty or len(df) < 20: return True, "Dati insuff."
 
-    # 1. Filtro Volume (RVOL)
-    avg_vol = df['volume'].rolling(window=20).mean().iloc[-1]
-    curr_vol = df['volume'].iloc[-1]
-    rvol = curr_vol / avg_vol if avg_vol > 0 else 1.0
-    
-    if rvol > MAX_RVOL:
-        return False, f"Volume Extreme ({rvol:.1f}x)"
-
-    # 2. Filtro Velocity (Dimensione Candela)
     open_p = df['open'].iloc[-1]
     close_p = df['close'].iloc[-1]
+    # Calcolo movimento percentuale assoluto della candela attuale
     pct_move = abs(close_p - open_p) / open_p
-    
+
+    # 1. Filtro Velocity Pura (Crash/Pump improvviso)
+    # Questo scatta sempre: se il prezzo vola, ci fermiamo.
     if pct_move > MAX_CANDLE_SIZE:
         return False, f"Impulse Move ({pct_move*100:.2f}%)"
+
+    # 2. Filtro Volume Intelligente (RVOL)
+    avg_vol = df['volume'].rolling(window=20).mean().iloc[-1]
+    curr_vol = df['volume'].iloc[-1]
+    
+    # Evitiamo divisioni per zero
+    rvol = curr_vol / avg_vol if avg_vol > 1 else 1.0
+    
+    # Blocchiamo per volume SOLO SE il prezzo si sta anche muovendo significativamente.
+    # Se il volume è alto ma il prezzo è fermo (pct_move basso), continuiamo a tradare!
+    if rvol > MAX_RVOL and pct_move > MIN_MOVE_FOR_RVOL:
+        return False, f"Volume Spike ({rvol:.1f}x) + Volatility"
 
     return True, "Safe"
 
 def run_barry():
-    print(f"🔫 [Barry MachineGun] Avvio su {TICKER}. {GRID_LEVELS} Livelli (Step {STEP_PCT*100:.2f}%).")
+    print(f"🔫 [Barry MachineGun] Avvio su {TICKER}. {GRID_LEVELS} Livelli (Step {STEP_PCT*100:.3f}%).")
     
     private_key = os.getenv("PRIVATE_KEY")
     wallet = os.getenv("WALLET_ADDRESS").lower()
@@ -100,11 +107,12 @@ def run_barry():
             # --- LOGICA CENTRO GRIGLIA ---
             if not my_pos:
                 # Se siamo Flat, resettiamo il centro se il mercato è calmo (trading allowed)
-                # Oppure se il prezzo si è spostato troppo dal vecchio centro vuoto
+                # Oppure se il prezzo si è spostato troppo dal vecchio centro vuoto (> 1 step)
                 if trading_is_allowed:
                     if center_price is None or abs(current_price - center_price) / center_price > STEP_PCT:
                         center_price = current_price
                         active_grid_orders = [] 
+                        # print(f"📍 [RESET] Nuovo Centro: {center_price:.4f}")
             else:
                 # Se abbiamo posizione, il centro è ANCORATO all'entry price
                 if center_price is None: center_price = float(my_pos['entry_price'])
@@ -125,7 +133,7 @@ def run_barry():
                         # Size del Proiettile (con Leva)
                         bullet_size_usd = (TOTAL_ALLOCATION_USD * LEVERAGE) / GRID_LEVELS
                         
-                        # ESECUZIONE REALE (Scommenta quando pronto)
+                        # ESECUZIONE REALE (Scommenta per attivare il trading reale)
                         # bot.execute_order(TICKER, "LONG", bullet_size_usd) 
                         
                         active_grid_orders.append(lvl['id'])
@@ -157,7 +165,7 @@ def run_barry():
                             
                             bullet_size_usd = (TOTAL_ALLOCATION_USD * LEVERAGE) / GRID_LEVELS
                             
-                            # ESECUZIONE REALE (Scommenta quando pronto)
+                            # ESECUZIONE REALE (Scommenta per attivare)
                             # bot.execute_order(TICKER, "SHORT", bullet_size_usd) 
                             
                             active_grid_orders.remove(lvl_id)
@@ -178,7 +186,7 @@ def run_barry():
                 if current_price < stop_price:
                     print("💀 [STOP] Fuori Range massimo. CHIUDO TUTTO.")
                     
-                    # ESECUZIONE REALE (Scommenta quando pronto)
+                    # ESECUZIONE REALE (Scommenta per attivare)
                     # bot.close_position(TICKER) 
                     
                     payload = {
