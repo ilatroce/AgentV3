@@ -21,7 +21,7 @@ LOOP_SPEED = 10        # 10s
 TOTAL_ALLOCATION_USD = 25.0   
 LEVERAGE = 25                 
 GRID_LINES = 40               
-RANGE_PCT = 0.01              # Range +/- 1%
+RANGE_PCT = 0.00025              # Range +/- 0.00025%
 
 # Calcoli Griglia
 STEP_PCT = (RANGE_PCT * 2) / GRID_LINES 
