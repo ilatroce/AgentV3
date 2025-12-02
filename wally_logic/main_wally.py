@@ -15,12 +15,12 @@ load_dotenv()
 # --- CONFIGURAZIONE WALLY: MAKER GRID (AVAX) 🧪 ---
 AGENT_NAME = "Wally"
 TICKER = "AVAX"        
-LOOP_SPEED = 15        # Controllo ogni 10 secondi (Maker non deve essere frenetico)
+LOOP_SPEED = 10        # 10s
 
 # Money Management
-TOTAL_ALLOCATION_USD = 25.0   
-LEVERAGE = 25                 
-GRID_LINES = 52               # 52 Linee Limit
+TOTAL_ALLOCATION_USD = 20.0   
+LEVERAGE = 20                 
+GRID_LINES = 52               
 RANGE_PCT = 0.01              # Range +/- 1%
 
 # Calcoli Griglia
@@ -51,17 +51,22 @@ def check_gatekeeper(bot, ticker):
 def cancel_all_limit_orders(bot, ticker):
     """Cancella tutti gli ordini pendenti per questo ticker"""
     try:
-        open_orders = bot.info.open_orders(bot.account.address)
+        # FIX: Usiamo account_address (stringa) invece di account.address (oggetto)
+        # Questo evita l'errore 'no attribute account'
+        addr = bot.account_address 
+        
+        open_orders = bot.info.open_orders(addr)
         for order in open_orders:
             if order['coin'] == ticker:
+                print(f"🧹 Cancello ordine {order['oid']}...")
                 bot.exchange.cancel(ticker, order['oid'])
+                time.sleep(0.1) # Evita rate limit
         print(f"🧹 [CLEANUP] Ordini Limit cancellati su {ticker}.")
     except Exception as e:
         print(f"Err cancel_all: {e}")
 
 def run_wally():
     print(f"🧪 [Wally MAKER] Avvio su {TICKER}. Range +/- {RANGE_PCT*100}%.")
-    print(f"   Strategia: Limit Orders (Risparmio Fee).")
     
     private_key = os.getenv("PRIVATE_KEY")
     wallet = os.getenv("WALLET_ADDRESS").lower()
@@ -82,7 +87,7 @@ def run_wally():
             if not is_safe:
                 print("⚠️ MERCATO PERICOLOSO. PAUSA E CANCELLAZIONE.")
                 
-                # A) Cancella ordini pendenti (Per non essere colpiti)
+                # A) Cancella ordini pendenti
                 cancel_all_limit_orders(bot, TICKER)
                 
                 # B) Chiudi posizioni aperte (Flush)
@@ -98,7 +103,7 @@ def run_wally():
                 print(f"⏳ Dormo per {PAUSE_DURATION/60} minuti.")
                 time.sleep(PAUSE_DURATION)
                 
-                # Reset al risveglio
+                # Reset
                 center_price = None
                 grid_initialized = False
                 continue 
@@ -108,10 +113,8 @@ def run_wally():
             my_pos = next((p for p in account["open_positions"] if p["symbol"] == TICKER), None)
             
             # --- INIZIALIZZAZIONE GRIGLIA (MAKER) ---
-            # Se non abbiamo una griglia attiva, la piazziamo
             if not grid_initialized:
                 
-                # Definisci il centro
                 if not my_pos:
                     center_price = current_price
                     print(f"🎯 [GRID START] Nuovo Centro: ${center_price:.4f}")
@@ -119,7 +122,6 @@ def run_wally():
                     center_price = float(my_pos['entry_price'])
                     print(f"🎯 [GRID RESUME] Centro recuperato: ${center_price:.4f}")
 
-                # Calcolo Prezzi Limite
                 upper_limit = center_price * (1 + RANGE_PCT)
                 lower_limit = center_price * (1 - RANGE_PCT)
                 bullet_usd = (TOTAL_ALLOCATION_USD * LEVERAGE) / GRID_LINES
@@ -127,18 +129,15 @@ def run_wally():
                 print(f"🛠️ [BUILD] Piazzo {GRID_LINES} ordini Limit...")
                 
                 # Piazziamo gli ordini
-                # Metà SOPRA (Sell/Short) e Metà SOTTO (Buy/Long)
-                
                 # LATO BUY (Sotto il centro)
                 for i in range(1, int(GRID_LINES/2) + 1):
                     price = center_price * (1 - (STEP_PCT * i))
-                    if price < current_price: # Piazza solo se è lontano dal prezzo attuale (Maker)
+                    if price < current_price: 
                         amount = round(bullet_usd / price, 4)
-                        # Nota: order_limit è pseudo-codice, Hyperliquid usa 'order' con limit type
-                        # Qui usiamo una chiamata grezza all'exchange perché l'SDK semplificato market_open non basta
+                        # Nota: Usiamo la funzione nativa exchange.order
                         res = bot.exchange.order(TICKER, True, amount, price, {"limit": {"tif": "Gtc"}})
-                        if res['status'] == 'ok': print(f"   ➕ Limit BUY @ {price:.4f}")
-                        time.sleep(0.2) # Evita rate limit
+                        # if res['status'] == 'ok': print(f"   ➕ Limit BUY @ {price:.4f}")
+                        time.sleep(0.1)
 
                 # LATO SELL (Sopra il centro)
                 for i in range(1, int(GRID_LINES/2) + 1):
@@ -146,49 +145,41 @@ def run_wally():
                     if price > current_price:
                         amount = round(bullet_usd / price, 4)
                         res = bot.exchange.order(TICKER, False, amount, price, {"limit": {"tif": "Gtc"}})
-                        if res['status'] == 'ok': print(f"   ➖ Limit SELL @ {price:.4f}")
-                        time.sleep(0.2)
+                        # if res['status'] == 'ok': print(f"   ➖ Limit SELL @ {price:.4f}")
+                        time.sleep(0.1)
 
                 grid_initialized = True
                 print("✅ Griglia Piazzata.")
 
             # --- MONITORAGGIO E STOP LOSS ---
-            # Se il prezzo esce dal range, chiudiamo tutto (Stop Loss)
             upper_limit = center_price * (1 + RANGE_PCT)
             lower_limit = center_price * (1 - RANGE_PCT)
             
             if current_price > upper_limit or current_price < lower_limit:
                 print(f"💀 [STOP LOSS] Prezzo fuori range ({current_price}). CHIUDO TUTTO.")
-                
-                # 1. Cancella ordini pendenti
                 cancel_all_limit_orders(bot, TICKER)
                 
-                # 2. Chiudi posizione a mercato
                 if my_pos:
                     pnl_usd = float(my_pos['pnl_usd'])
                     bot.close_position(TICKER)
                     payload = {"operation": "CLOSE", "symbol": TICKER, "reason": "Range Broken", "pnl": pnl_usd, "agent": AGENT_NAME}
                     db_utils.log_bot_operation(payload)
                 
-                # Reset
                 center_price = None
                 grid_initialized = False
                 time.sleep(10)
                 continue
 
-            # --- REFRESH GRIGLIA (Opzionale) ---
-            # In un bot Maker avanzato, se un ordine viene eseguito, bisogna rimpiazzarlo con il suo opposto (Take Profit).
-            # Hyperliquid non notifica via HTTP se un ordine è fillato. 
-            # Per semplicità, qui resettiamo la griglia SOLO se non ci sono più ordini aperti ma siamo ancora nel range
-            # (Una logica più complessa richiederebbe WebSocket).
-            
-            open_orders = bot.info.open_orders(bot.account.address)
+            # --- REFRESH GRIGLIA ---
+            # Se la griglia è stata consumata per metà, resettiamo
+            # Usiamo account_address anche qui per sicurezza
+            open_orders = bot.info.open_orders(bot.account_address)
             my_orders = [o for o in open_orders if o['coin'] == TICKER]
             
-            if len(my_orders) < (GRID_LINES * 0.5): # Se metà griglia è stata mangiata
-                print("🔄 [REFRESH] Molti ordini eseguiti. Ripiazzo la griglia attorno al nuovo centro.")
+            if len(my_orders) < (GRID_LINES * 0.5): 
+                print("🔄 [REFRESH] Molti ordini eseguiti. Ripiazzo la griglia.")
                 cancel_all_limit_orders(bot, TICKER)
-                grid_initialized = False # Al prossimo giro ricalcola e ripiazza
+                grid_initialized = False 
                 time.sleep(5)
 
         except Exception as e:
