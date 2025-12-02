@@ -51,16 +51,13 @@ def check_gatekeeper(bot, ticker):
 def cancel_all_limit_orders(bot, ticker):
     """Cancella tutti gli ordini pendenti per questo ticker"""
     try:
-        # FIX: Usiamo account_address (stringa) invece di account.address (oggetto)
-        # Questo evita l'errore 'no attribute account'
         addr = bot.account_address 
-        
         open_orders = bot.info.open_orders(addr)
         for order in open_orders:
             if order['coin'] == ticker:
-                print(f"🧹 Cancello ordine {order['oid']}...")
+                # print(f"🧹 Cancello ordine {order['oid']}...")
                 bot.exchange.cancel(ticker, order['oid'])
-                time.sleep(0.1) # Evita rate limit
+                time.sleep(0.1) 
         print(f"🧹 [CLEANUP] Ordini Limit cancellati su {ticker}.")
     except Exception as e:
         print(f"Err cancel_all: {e}")
@@ -86,11 +83,9 @@ def run_wally():
             
             if not is_safe:
                 print("⚠️ MERCATO PERICOLOSO. PAUSA E CANCELLAZIONE.")
-                
-                # A) Cancella ordini pendenti
                 cancel_all_limit_orders(bot, TICKER)
                 
-                # B) Chiudi posizioni aperte (Flush)
+                # Flush
                 account = bot.get_account_status()
                 my_pos = next((p for p in account["open_positions"] if p["symbol"] == TICKER), None)
                 if my_pos:
@@ -102,11 +97,7 @@ def run_wally():
 
                 print(f"⏳ Dormo per {PAUSE_DURATION/60} minuti.")
                 time.sleep(PAUSE_DURATION)
-                
-                # Reset
-                center_price = None
-                grid_initialized = False
-                continue 
+                center_price = None; grid_initialized = False; continue 
 
             # 3. Stato Account
             account = bot.get_account_status()
@@ -122,57 +113,56 @@ def run_wally():
                     center_price = float(my_pos['entry_price'])
                     print(f"🎯 [GRID RESUME] Centro recuperato: ${center_price:.4f}")
 
-                upper_limit = center_price * (1 + RANGE_PCT)
-                lower_limit = center_price * (1 - RANGE_PCT)
                 bullet_usd = (TOTAL_ALLOCATION_USD * LEVERAGE) / GRID_LINES
+                print(f"🛠️ [BUILD] Piazzo {GRID_LINES} ordini Limit (Size: ~${bullet_usd:.2f})...")
                 
-                print(f"🛠️ [BUILD] Piazzo {GRID_LINES} ordini Limit...")
-                
-                # Piazziamo gli ordini
                 # LATO BUY (Sotto il centro)
                 for i in range(1, int(GRID_LINES/2) + 1):
-                    price = center_price * (1 - (STEP_PCT * i))
+                    # CALCOLO PREZZO E ARROTONDAMENTO (FIX ERROR)
+                    raw_price = center_price * (1 - (STEP_PCT * i))
+                    price = round(raw_price, 4) # Arrotonda prezzo a 4 decimali
+                    
                     if price < current_price: 
-                        amount = round(bullet_usd / price, 4)
-                        # Nota: Usiamo la funzione nativa exchange.order
+                        raw_amount = bullet_usd / price
+                        amount = round(raw_amount, 2) # Arrotonda quantità a 2 decimali
+                        
                         res = bot.exchange.order(TICKER, True, amount, price, {"limit": {"tif": "Gtc"}})
-                        # if res['status'] == 'ok': print(f"   ➕ Limit BUY @ {price:.4f}")
-                        time.sleep(0.1)
+                        if res['status'] == 'ok': print(f"   ➕ Limit BUY @ {price}")
+                        time.sleep(0.2)
 
                 # LATO SELL (Sopra il centro)
                 for i in range(1, int(GRID_LINES/2) + 1):
-                    price = center_price * (1 + (STEP_PCT * i))
+                    # CALCOLO PREZZO E ARROTONDAMENTO (FIX ERROR)
+                    raw_price = center_price * (1 + (STEP_PCT * i))
+                    price = round(raw_price, 4) # Arrotonda prezzo a 4 decimali
+                    
                     if price > current_price:
-                        amount = round(bullet_usd / price, 4)
+                        raw_amount = bullet_usd / price
+                        amount = round(raw_amount, 2) # Arrotonda quantità a 2 decimali
+                        
                         res = bot.exchange.order(TICKER, False, amount, price, {"limit": {"tif": "Gtc"}})
-                        # if res['status'] == 'ok': print(f"   ➖ Limit SELL @ {price:.4f}")
-                        time.sleep(0.1)
+                        if res['status'] == 'ok': print(f"   ➖ Limit SELL @ {price}")
+                        time.sleep(0.2)
 
                 grid_initialized = True
                 print("✅ Griglia Piazzata.")
 
-            # --- MONITORAGGIO E STOP LOSS ---
+            # --- MONITORAGGIO STOP LOSS ---
             upper_limit = center_price * (1 + RANGE_PCT)
             lower_limit = center_price * (1 - RANGE_PCT)
             
             if current_price > upper_limit or current_price < lower_limit:
                 print(f"💀 [STOP LOSS] Prezzo fuori range ({current_price}). CHIUDO TUTTO.")
                 cancel_all_limit_orders(bot, TICKER)
-                
                 if my_pos:
                     pnl_usd = float(my_pos['pnl_usd'])
                     bot.close_position(TICKER)
                     payload = {"operation": "CLOSE", "symbol": TICKER, "reason": "Range Broken", "pnl": pnl_usd, "agent": AGENT_NAME}
                     db_utils.log_bot_operation(payload)
-                
-                center_price = None
-                grid_initialized = False
-                time.sleep(10)
-                continue
+                center_price = None; grid_initialized = False; time.sleep(10); continue
 
             # --- REFRESH GRIGLIA ---
-            # Se la griglia è stata consumata per metà, resettiamo
-            # Usiamo account_address anche qui per sicurezza
+            # Se la griglia è mezza vuota, resettiamo per seguire il prezzo
             open_orders = bot.info.open_orders(bot.account_address)
             my_orders = [o for o in open_orders if o['coin'] == TICKER]
             
