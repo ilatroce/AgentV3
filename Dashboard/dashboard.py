@@ -9,17 +9,17 @@ from dotenv import load_dotenv
 from PIL import Image
 import warnings
 
+# Ignoriamo i warning
 warnings.filterwarnings('ignore')
 
-# --- CONFIGURAZIONE REALE ---
-# Aggiornato il totale: 25(Bruce) + 25(Barry) + 20(Wally) + 25(Harrison)
+# --- CONFIGURAZIONE REALE (Totale: 95$) ---
 TOTAL_DEPOSIT = 95.00  
 ALLOCATION_BRUCE = 25.00
 ALLOCATION_BARRY = 25.00
 ALLOCATION_WALLY = 20.00
-ALLOCATION_HARRISON = 25.00
+ALLOCATION_HARRISON = 25.00 # Il nuovo arrivato
 
-# --- PALETTE COLORI HAPPY HARBOR ---
+# --- PALETTE COLORI ---
 BG_COLOR = "#4B8056"      
 SIDEBAR_COLOR = "#00695C" 
 CARD_WHITE = "#FFFFFF"    
@@ -33,7 +33,7 @@ THEME = {
     "Bruce": {"primary": "#FBC02D", "light": "#FFF9C4", "icon": "🦇"}, # Giallo
     "Barry": {"primary": "#29B6F6", "light": "#E1F5FE", "icon": "⚡"}, # Azzurro
     "Wally": {"primary": "#FF7043", "light": "#FFCCBC", "icon": "🧪"}, # Arancione
-    "Harrison": {"primary": "#9C27B0", "light": "#E1BEE7", "icon": "🌪️"}, # Viola (Nuovo!)
+    "Harrison": {"primary": "#9C27B0", "light": "#E1BEE7", "icon": "🌪️"}, # Viola (Harrison)
     "Global": {"primary": "#009688", "light": "#B2DFDB", "icon": "⚓"}
 }
 
@@ -61,7 +61,6 @@ st.markdown(f"""
     .op-badge {{ padding: 3px 8px; border-radius: 12px; font-weight: bold; font-size: 12px; color: white !important; }}
     h1, h2, h3 {{ color: {TEXT_LIGHT} !important; font-family: 'Segoe UI', sans-serif; }}
     
-    /* Fix visibilità testo posizioni */
     .pos-card {{
         background-color: {CARD_WHITE}; border-radius: 8px; padding: 15px;
         box-shadow: 0 2px 5px rgba(0,0,0,0.1); 
@@ -86,20 +85,20 @@ def load_data():
                 df_pos = pd.read_sql(f"SELECT * FROM open_positions WHERE snapshot_id = {sid}", conn)
             
             def detect_agent(row):
-                # Priorità 1: Nome esplicito
+                # 1. Cerca nella colonna
                 if 'agent_name' in row and row['agent_name']: return row['agent_name']
-                # Priorità 2: JSON
+                # 2. Cerca nel JSON
                 try:
                     p = row['raw_payload']
                     if isinstance(p, str): p = json.loads(p)
                     if isinstance(p, dict) and 'agent' in p: return p['agent']
                 except: pass
 
-                # Priorità 3: Simbolo
+                # 3. Inferenza da Simbolo (Regole Justice League)
                 sym = row.get('symbol', '')
                 if sym == 'SUI': return 'Barry'
                 if sym == 'AVAX': return 'Wally'
-                if sym == 'DOGE': return 'Harrison'
+                if sym == 'DOGE': return 'Harrison' # Harrison gestisce DOGE
                 if sym in ['BTC', 'ETH', 'SOL']: return 'Bruce'
                 return 'Bruce'
 
@@ -133,7 +132,6 @@ def get_virtual_equity(agent_name, initial, df_ops):
         start_date = ops.iloc[0]['created_at'] - timedelta(hours=1)
         points.append({"time": start_date, "equity": initial})
     else:
-        # Linea piatta se non ci sono dati
         points.append({"time": datetime.now(), "equity": initial})
         return pd.DataFrame(points)
     
@@ -144,8 +142,7 @@ def get_virtual_equity(agent_name, initial, df_ops):
             try:
                 raw = row['raw_payload']
                 if isinstance(raw, str): raw = json.loads(raw)
-                # Tentativi multipli di trovare il campo profitto
-                pnl = float(raw.get('pnl', raw.get('realized_pnl', raw.get('profit_usd', 0.0))))
+                pnl = float(raw.get('pnl', raw.get('realized_pnl', 0.0)))
             except: pass
         curr += pnl
         points.append({"time": row['created_at'], "equity": curr})
@@ -184,7 +181,7 @@ with col_L2:
     except: st.title("⚓ HAPPY HARBOR")
 
 st.sidebar.title("Navigazione")
-# Aggiunto Harrison al menu
+# MENU COMPLETO CON TUTTI E 4
 page = st.sidebar.radio("Vai a:", ["Overview 🌐", "Bruce 🦇", "Barry ⚡", "Wally 🧪", "Harrison 🌪️"])
 
 if page == "Overview 🌐":
@@ -201,7 +198,7 @@ if page == "Overview 🌐":
         with cols[i]: render_metric_pill(lab, d_val, d_val, d_pct)
             
     st.subheader("🆚 Performance Bot a Confronto (%)")
-    # Calcolo Multi-Agente
+    # LISTA AGENTI COMPLETA
     agents_list = [
         ("Bruce", ALLOCATION_BRUCE), 
         ("Barry", ALLOCATION_BARRY), 
@@ -227,26 +224,29 @@ if page == "Overview 🌐":
     else: st.info("Dati insufficienti.")
 
 else:
-    # Logica Tab Agente Singolo
-    agent = page.split(" ")[0] # Prende il nome prima dell'emoji (es "Bruce" da "Bruce 🦇")
+    # GESTIONE TAB SINGOLE (Dinamica)
+    agent_key = page.split(" ")[0] # Prende "Harrison" da "Harrison 🌪️"
     
-    alloc = ALLOCATION_BRUCE
-    if agent == "Barry": alloc = ALLOCATION_BARRY
-    elif agent == "Wally": alloc = ALLOCATION_WALLY
-    elif agent == "Harrison": alloc = ALLOCATION_HARRISON
+    # Mapping sicuro
+    alloc = 0
+    if agent_key == "Bruce": alloc = ALLOCATION_BRUCE
+    elif agent_key == "Barry": alloc = ALLOCATION_BARRY
+    elif agent_key == "Wally": alloc = ALLOCATION_WALLY
+    elif agent_key == "Harrison": alloc = ALLOCATION_HARRISON
     
-    t = THEME.get(agent, THEME["Global"])
+    t = THEME.get(agent_key, THEME["Global"])
     
-    st.markdown(f"<h2 style='color: {t['primary']} !important;'>{t['icon']} Agente {agent}</h2>", unsafe_allow_html=True)
+    st.markdown(f"<h2 style='color: {t['primary']} !important;'>{t['icon']} Agente {agent_key}</h2>", unsafe_allow_html=True)
     
-    df_equity = get_virtual_equity(agent, alloc, df_ops)
+    df_equity = get_virtual_equity(agent_key, alloc, df_ops)
     curr_virt_base = df_equity.iloc[-1]['equity'] if not df_equity.empty else alloc
 
+    # Filtro Simboli
     relevant_syms = []
-    if agent == 'Bruce': relevant_syms = ['BTC', 'ETH', 'SOL']
-    elif agent == 'Barry': relevant_syms = ['SUI']
-    elif agent == 'Wally': relevant_syms = ['AVAX']
-    elif agent == 'Harrison': relevant_syms = ['DOGE']
+    if agent_key == 'Bruce': relevant_syms = ['BTC', 'ETH', 'SOL']
+    elif agent_key == 'Barry': relevant_syms = ['SUI']
+    elif agent_key == 'Wally': relevant_syms = ['AVAX']
+    elif agent_key == 'Harrison': relevant_syms = ['DOGE']
     
     unrealized_pnl = 0.0
     if not df_pos.empty:
@@ -268,19 +268,18 @@ else:
             fig.update_xaxes(color=TEXT_LIGHT); fig.update_yaxes(color=TEXT_LIGHT)
             st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader(f"⚔️ Posizioni Attive ({agent})")
+    st.subheader(f"⚔️ Posizioni Attive ({agent_key})")
     my_pos = df_pos[df_pos['symbol'].isin(relevant_syms)] if not df_pos.empty else pd.DataFrame()
     if not my_pos.empty:
         cols_p = st.columns(3)
         for idx, row in my_pos.iterrows():
             pnl = row['pnl_usd']; color = "#4CAF50" if pnl >= 0 else "#F44336"
             with cols_p[idx % 3]:
-                # CSS Inline per forzare il colore del testo
                 st.markdown(f"""<div class="pos-card" style="border-left: 5px solid {color};"><div style="font-size: 18px; font-weight: bold; color: #333;">{row['symbol']}</div><div style="font-size: 12px; color: #666;">{row['side']} x{row['leverage']}</div><div style="font-size: 24px; font-weight: bold; color: {color}; margin-top: 5px;">${pnl:+.2f}</div></div>""", unsafe_allow_html=True)
-    else: st.info(f"{agent} è Flat.")
+    else: st.info(f"{agent_key} è Flat.")
 
     st.subheader("📜 Storico Operazioni")
-    my_ops = df_ops[df_ops['agent_clean'] == agent] if 'agent_clean' in df_ops.columns else pd.DataFrame()
+    my_ops = df_ops[df_ops['agent_clean'] == agent_key] if 'agent_clean' in df_ops.columns else pd.DataFrame()
     render_history_list(my_ops)
 
 st.markdown("<br><div style='text-align: center; color: #ccc; font-size: 12px;'>Happy Harbor Hosting Services © 2024</div>", unsafe_allow_html=True)
