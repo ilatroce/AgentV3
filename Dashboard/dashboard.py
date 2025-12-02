@@ -12,12 +12,12 @@ import warnings
 # Ignoriamo i warning
 warnings.filterwarnings('ignore')
 
-# --- CONFIGURAZIONE REALE (Totale: 95$) ---
+# --- CONFIGURAZIONE REALE ---
 TOTAL_DEPOSIT = 95.00  
 ALLOCATION_BRUCE = 25.00
 ALLOCATION_BARRY = 25.00
 ALLOCATION_WALLY = 20.00
-ALLOCATION_HARRISON = 25.00 # Il nuovo arrivato
+ALLOCATION_HARRISON = 25.00
 
 # --- PALETTE COLORI ---
 BG_COLOR = "#4B8056"      
@@ -30,10 +30,10 @@ ACCENT_RED = "#D50000"
 
 # Temi Agenti
 THEME = {
-    "Bruce": {"primary": "#FBC02D", "light": "#FFF9C4", "icon": "🦇"}, # Giallo
-    "Barry": {"primary": "#29B6F6", "light": "#E1F5FE", "icon": "⚡"}, # Azzurro
-    "Wally": {"primary": "#FF7043", "light": "#FFCCBC", "icon": "🧪"}, # Arancione
-    "Harrison": {"primary": "#9C27B0", "light": "#E1BEE7", "icon": "🌪️"}, # Viola (Harrison)
+    "Bruce": {"primary": "#FBC02D", "light": "#FFF9C4", "icon": "🦇"}, 
+    "Barry": {"primary": "#29B6F6", "light": "#E1F5FE", "icon": "⚡"}, 
+    "Wally": {"primary": "#FF7043", "light": "#FFCCBC", "icon": "🧪"}, 
+    "Harrison": {"primary": "#9C27B0", "light": "#E1BEE7", "icon": "🌪️"}, 
     "Global": {"primary": "#009688", "light": "#B2DFDB", "icon": "⚓"}
 }
 
@@ -85,20 +85,17 @@ def load_data():
                 df_pos = pd.read_sql(f"SELECT * FROM open_positions WHERE snapshot_id = {sid}", conn)
             
             def detect_agent(row):
-                # 1. Cerca nella colonna
                 if 'agent_name' in row and row['agent_name']: return row['agent_name']
-                # 2. Cerca nel JSON
                 try:
                     p = row['raw_payload']
                     if isinstance(p, str): p = json.loads(p)
                     if isinstance(p, dict) and 'agent' in p: return p['agent']
                 except: pass
 
-                # 3. Inferenza da Simbolo (Regole Justice League)
                 sym = row.get('symbol', '')
                 if sym == 'SUI': return 'Barry'
                 if sym == 'AVAX': return 'Wally'
-                if sym == 'DOGE': return 'Harrison' # Harrison gestisce DOGE
+                if sym == 'DOGE': return 'Harrison'
                 if sym in ['BTC', 'ETH', 'SOL']: return 'Bruce'
                 return 'Bruce'
 
@@ -137,7 +134,6 @@ def get_virtual_equity(agent_name, initial, df_ops):
     
     for _, row in ops.iterrows():
         pnl = 0.0
-        # Cerchiamo PnL su qualsiasi operazione di chiusura
         if 'CLOSE' in row['operation'].upper():
             try:
                 raw = row['raw_payload']
@@ -177,11 +173,12 @@ df_bal, df_ops, df_pos = load_data()
 
 col_L1, col_L2, col_L3 = st.columns([1, 2, 1])
 with col_L2:
-    try: st.image('happy_harbor_logo.png', use_container_width=True)
+    try: 
+        # UPDATE: Sostituito use_container_width=True con width="stretch" per Streamlit 2025
+        st.image('happy_harbor_logo.png', width="stretch") 
     except: st.title("⚓ HAPPY HARBOR")
 
 st.sidebar.title("Navigazione")
-# MENU COMPLETO CON TUTTI E 4
 page = st.sidebar.radio("Vai a:", ["Overview 🌐", "Bruce 🦇", "Barry ⚡", "Wally 🧪", "Harrison 🌪️"])
 
 if page == "Overview 🌐":
@@ -198,13 +195,7 @@ if page == "Overview 🌐":
         with cols[i]: render_metric_pill(lab, d_val, d_val, d_pct)
             
     st.subheader("🆚 Performance Bot a Confronto (%)")
-    # LISTA AGENTI COMPLETA
-    agents_list = [
-        ("Bruce", ALLOCATION_BRUCE), 
-        ("Barry", ALLOCATION_BARRY), 
-        ("Wally", ALLOCATION_WALLY),
-        ("Harrison", ALLOCATION_HARRISON)
-    ]
+    agents_list = [("Bruce", ALLOCATION_BRUCE), ("Barry", ALLOCATION_BARRY), ("Wally", ALLOCATION_WALLY), ("Harrison", ALLOCATION_HARRISON)]
     all_data = []
     
     for ag_name, ag_alloc in agents_list:
@@ -220,33 +211,30 @@ if page == "Overview 🌐":
         fig_comp = px.line(df_compare, x='time', y='pct_change', color='Agent', color_discrete_map=color_map)
         fig_comp.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=300, margin=dict(l=0,r=0,t=20,b=0), legend=dict(font=dict(color=TEXT_LIGHT)))
         fig_comp.update_xaxes(color=TEXT_LIGHT, showgrid=False); fig_comp.update_yaxes(color=TEXT_LIGHT, title="Crescita %", showgrid=True, gridcolor="#555")
-        st.plotly_chart(fig_comp, use_container_width=True)
+        
+        # UPDATE: width="stretch" per il grafico
+        st.plotly_chart(fig_comp, width="stretch")
     else: st.info("Dati insufficienti.")
 
 else:
-    # GESTIONE TAB SINGOLE (Dinamica)
-    agent_key = page.split(" ")[0] # Prende "Harrison" da "Harrison 🌪️"
+    agent = page.split(" ")[0]
+    alloc = ALLOCATION_BRUCE
+    if agent == "Barry": alloc = ALLOCATION_BARRY
+    elif agent == "Wally": alloc = ALLOCATION_WALLY
+    elif agent == "Harrison": alloc = ALLOCATION_HARRISON
     
-    # Mapping sicuro
-    alloc = 0
-    if agent_key == "Bruce": alloc = ALLOCATION_BRUCE
-    elif agent_key == "Barry": alloc = ALLOCATION_BARRY
-    elif agent_key == "Wally": alloc = ALLOCATION_WALLY
-    elif agent_key == "Harrison": alloc = ALLOCATION_HARRISON
+    t = THEME.get(agent, THEME["Global"])
     
-    t = THEME.get(agent_key, THEME["Global"])
+    st.markdown(f"<h2 style='color: {t['primary']} !important;'>{t['icon']} Agente {agent}</h2>", unsafe_allow_html=True)
     
-    st.markdown(f"<h2 style='color: {t['primary']} !important;'>{t['icon']} Agente {agent_key}</h2>", unsafe_allow_html=True)
-    
-    df_equity = get_virtual_equity(agent_key, alloc, df_ops)
+    df_equity = get_virtual_equity(agent, alloc, df_ops)
     curr_virt_base = df_equity.iloc[-1]['equity'] if not df_equity.empty else alloc
 
-    # Filtro Simboli
     relevant_syms = []
-    if agent_key == 'Bruce': relevant_syms = ['BTC', 'ETH', 'SOL']
-    elif agent_key == 'Barry': relevant_syms = ['SUI']
-    elif agent_key == 'Wally': relevant_syms = ['AVAX']
-    elif agent_key == 'Harrison': relevant_syms = ['DOGE']
+    if agent == 'Bruce': relevant_syms = ['BTC', 'ETH', 'SOL']
+    elif agent == 'Barry': relevant_syms = ['SUI']
+    elif agent == 'Wally': relevant_syms = ['AVAX']
+    elif agent == 'Harrison': relevant_syms = ['DOGE']
     
     unrealized_pnl = 0.0
     if not df_pos.empty:
@@ -266,9 +254,11 @@ else:
             fig.update_traces(line_color=t['primary'], line_width=3)
             fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=220, margin=dict(l=0,r=0,t=30,b=0))
             fig.update_xaxes(color=TEXT_LIGHT); fig.update_yaxes(color=TEXT_LIGHT)
-            st.plotly_chart(fig, use_container_width=True)
+            
+            # UPDATE: width="stretch"
+            st.plotly_chart(fig, width="stretch")
 
-    st.subheader(f"⚔️ Posizioni Attive ({agent_key})")
+    st.subheader(f"⚔️ Posizioni Attive ({agent})")
     my_pos = df_pos[df_pos['symbol'].isin(relevant_syms)] if not df_pos.empty else pd.DataFrame()
     if not my_pos.empty:
         cols_p = st.columns(3)
@@ -276,10 +266,10 @@ else:
             pnl = row['pnl_usd']; color = "#4CAF50" if pnl >= 0 else "#F44336"
             with cols_p[idx % 3]:
                 st.markdown(f"""<div class="pos-card" style="border-left: 5px solid {color};"><div style="font-size: 18px; font-weight: bold; color: #333;">{row['symbol']}</div><div style="font-size: 12px; color: #666;">{row['side']} x{row['leverage']}</div><div style="font-size: 24px; font-weight: bold; color: {color}; margin-top: 5px;">${pnl:+.2f}</div></div>""", unsafe_allow_html=True)
-    else: st.info(f"{agent_key} è Flat.")
+    else: st.info(f"{agent} è Flat.")
 
     st.subheader("📜 Storico Operazioni")
-    my_ops = df_ops[df_ops['agent_clean'] == agent_key] if 'agent_clean' in df_ops.columns else pd.DataFrame()
+    my_ops = df_ops[df_ops['agent_clean'] == agent] if 'agent_clean' in df_ops.columns else pd.DataFrame()
     render_history_list(my_ops)
 
 st.markdown("<br><div style='text-align: center; color: #ccc; font-size: 12px;'>Happy Harbor Hosting Services © 2024</div>", unsafe_allow_html=True)
