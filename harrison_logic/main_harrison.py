@@ -14,7 +14,7 @@ load_dotenv()
 
 # --- CONFIGURAZIONE HARRISON: VOLATILITY HUNTER (REVERSE GRID) 🌪️ ---
 AGENT_NAME = "Harrison"
-TICKER = "XRP"        # Harrison ama la volatilità, DOGE è perfetto
+TICKER = "FARTCOIN"        # Harrison ama la volatilità, FARTCOIN è perfetto
 LOOP_SPEED = 15         # Controllo veloce (5s)
 
 # Money Management
