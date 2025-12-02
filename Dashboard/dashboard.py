@@ -9,17 +9,16 @@ from dotenv import load_dotenv
 from PIL import Image
 import warnings
 
-# Ignoriamo i warning generici, ma abbiamo fixato quelli specifici di Streamlit
 warnings.filterwarnings('ignore')
 
 # --- CONFIGURAZIONE REALE ---
-TOTAL_DEPOSIT = 95.00  
+TOTAL_DEPOSIT = 95.00  # 25(B) + 25(Bar) + 20(W) + 25(H)
 ALLOCATION_BRUCE = 25.00
 ALLOCATION_BARRY = 25.00
 ALLOCATION_WALLY = 20.00
-ALLOCATION_HARRISON = 25.00
+ALLOCATION_HARRISON = 25.00 # Nuova allocazione
 
-# --- PALETTE COLORI ---
+# --- PALETTE COLORI HAPPY HARBOR ---
 BG_COLOR = "#4B8056"      
 SIDEBAR_COLOR = "#00695C" 
 CARD_WHITE = "#FFFFFF"    
@@ -30,10 +29,10 @@ ACCENT_RED = "#D50000"
 
 # Temi Agenti
 THEME = {
-    "Bruce": {"primary": "#FBC02D", "light": "#FFF9C4", "icon": "🦇"}, 
-    "Barry": {"primary": "#29B6F6", "light": "#E1F5FE", "icon": "⚡"}, 
-    "Wally": {"primary": "#FF7043", "light": "#FFCCBC", "icon": "🧪"}, 
-    "Harrison": {"primary": "#9C27B0", "light": "#E1BEE7", "icon": "🌪️"}, 
+    "Bruce": {"primary": "#FBC02D", "light": "#FFF9C4", "icon": "🦇"}, # Giallo
+    "Barry": {"primary": "#29B6F6", "light": "#E1F5FE", "icon": "⚡"}, # Azzurro
+    "Wally": {"primary": "#FF7043", "light": "#FFCCBC", "icon": "🧪"}, # Arancione
+    "Harrison": {"primary": "#9C27B0", "light": "#E1BEE7", "icon": "🌪️"}, # Viola (Reverse Flash)
     "Global": {"primary": "#009688", "light": "#B2DFDB", "icon": "⚓"}
 }
 
@@ -63,9 +62,9 @@ st.markdown(f"""
     
     .pos-card {{
         background-color: {CARD_WHITE}; border-radius: 8px; padding: 15px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1); 
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1); color: {TEXT_DARK} !important;
     }}
-    .pos-card div {{ color: {TEXT_DARK} !important; }}
+    .pos-card strong {{ color: {TEXT_DARK} !important; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -95,7 +94,7 @@ def load_data():
                 sym = row.get('symbol', '')
                 if sym == 'SUI': return 'Barry'
                 if sym == 'AVAX': return 'Wally'
-                if sym == 'DOGE': return 'Harrison'
+                if sym == 'DOGE': return 'Harrison' # Harrison su DOGE
                 if sym in ['BTC', 'ETH', 'SOL']: return 'Bruce'
                 return 'Bruce'
 
@@ -124,7 +123,6 @@ def get_virtual_equity(agent_name, initial, df_ops):
     if df_ops.empty: return pd.DataFrame()
     ops = df_ops[df_ops['agent_clean'] == agent_name].sort_values('created_at')
     points = []; curr = initial
-    
     if not ops.empty:
         start_date = ops.iloc[0]['created_at'] - timedelta(hours=1)
         points.append({"time": start_date, "equity": initial})
@@ -142,7 +140,6 @@ def get_virtual_equity(agent_name, initial, df_ops):
             except: pass
         curr += pnl
         points.append({"time": row['created_at'], "equity": curr})
-    
     return pd.DataFrame(points)
 
 def render_metric_pill(label, val, delta, delta_pct):
@@ -173,9 +170,7 @@ df_bal, df_ops, df_pos = load_data()
 
 col_L1, col_L2, col_L3 = st.columns([1, 2, 1])
 with col_L2:
-    try: 
-        # FIX 1: use_container_width=True -> width="stretch"
-        st.image('happy_harbor_logo.png', width="stretch")
+    try: st.image('happy_harbor_logo.png', use_container_width=True)
     except: st.title("⚓ HAPPY HARBOR")
 
 st.sidebar.title("Navigazione")
@@ -195,12 +190,8 @@ if page == "Overview 🌐":
         with cols[i]: render_metric_pill(lab, d_val, d_val, d_pct)
             
     st.subheader("🆚 Performance Bot a Confronto (%)")
-    agents_list = [
-        ("Bruce", ALLOCATION_BRUCE), 
-        ("Barry", ALLOCATION_BARRY), 
-        ("Wally", ALLOCATION_WALLY),
-        ("Harrison", ALLOCATION_HARRISON)
-    ]
+    # Calcolo Multi-Agente
+    agents_list = [("Bruce", ALLOCATION_BRUCE), ("Barry", ALLOCATION_BARRY), ("Wally", ALLOCATION_WALLY), ("Harrison", ALLOCATION_HARRISON)]
     all_data = []
     
     for ag_name, ag_alloc in agents_list:
@@ -216,20 +207,16 @@ if page == "Overview 🌐":
         fig_comp = px.line(df_compare, x='time', y='pct_change', color='Agent', color_discrete_map=color_map)
         fig_comp.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=300, margin=dict(l=0,r=0,t=20,b=0), legend=dict(font=dict(color=TEXT_LIGHT)))
         fig_comp.update_xaxes(color=TEXT_LIGHT, showgrid=False); fig_comp.update_yaxes(color=TEXT_LIGHT, title="Crescita %", showgrid=True, gridcolor="#555")
-        
-        # FIX 2: use_container_width=True -> width="stretch"
-        st.plotly_chart(fig_comp, width="stretch")
+        st.plotly_chart(fig_comp, use_container_width=True)
     else: st.info("Dati insufficienti.")
 
 else:
-    agent = page.split(" ")[0] 
-    alloc = ALLOCATION_BRUCE
-    if agent == "Barry": alloc = ALLOCATION_BARRY
-    elif agent == "Wally": alloc = ALLOCATION_WALLY
-    elif agent == "Harrison": alloc = ALLOCATION_HARRISON
+    if "Bruce" in page: agent = "Bruce"; alloc = ALLOCATION_BRUCE
+    elif "Barry" in page: agent = "Barry"; alloc = ALLOCATION_BARRY
+    elif "Wally" in page: agent = "Wally"; alloc = ALLOCATION_WALLY
+    elif "Harrison" in page: agent = "Harrison"; alloc = ALLOCATION_HARRISON
     
-    t = THEME.get(agent, THEME["Global"])
-    
+    t = THEME[agent]
     st.markdown(f"<h2 style='color: {t['primary']} !important;'>{t['icon']} Agente {agent}</h2>", unsafe_allow_html=True)
     
     df_equity = get_virtual_equity(agent, alloc, df_ops)
@@ -259,9 +246,7 @@ else:
             fig.update_traces(line_color=t['primary'], line_width=3)
             fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=220, margin=dict(l=0,r=0,t=30,b=0))
             fig.update_xaxes(color=TEXT_LIGHT); fig.update_yaxes(color=TEXT_LIGHT)
-            
-            # FIX 3: use_container_width=True -> width="stretch"
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, use_container_width=True)
 
     st.subheader(f"⚔️ Posizioni Attive ({agent})")
     my_pos = df_pos[df_pos['symbol'].isin(relevant_syms)] if not df_pos.empty else pd.DataFrame()
