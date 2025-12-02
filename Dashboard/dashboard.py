@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from PIL import Image
 import warnings
 
-# Ignoriamo i warning
+# Ignoriamo i warning generici, ma abbiamo fixato quelli specifici di Streamlit
 warnings.filterwarnings('ignore')
 
 # --- CONFIGURAZIONE REALE ---
@@ -174,8 +174,8 @@ df_bal, df_ops, df_pos = load_data()
 col_L1, col_L2, col_L3 = st.columns([1, 2, 1])
 with col_L2:
     try: 
-        # UPDATE: Sostituito use_container_width=True con width="stretch" per Streamlit 2025
-        st.image('happy_harbor_logo.png', width="stretch") 
+        # FIX 1: use_container_width=True -> width="stretch"
+        st.image('happy_harbor_logo.png', width="stretch")
     except: st.title("⚓ HAPPY HARBOR")
 
 st.sidebar.title("Navigazione")
@@ -195,7 +195,12 @@ if page == "Overview 🌐":
         with cols[i]: render_metric_pill(lab, d_val, d_val, d_pct)
             
     st.subheader("🆚 Performance Bot a Confronto (%)")
-    agents_list = [("Bruce", ALLOCATION_BRUCE), ("Barry", ALLOCATION_BARRY), ("Wally", ALLOCATION_WALLY), ("Harrison", ALLOCATION_HARRISON)]
+    agents_list = [
+        ("Bruce", ALLOCATION_BRUCE), 
+        ("Barry", ALLOCATION_BARRY), 
+        ("Wally", ALLOCATION_WALLY),
+        ("Harrison", ALLOCATION_HARRISON)
+    ]
     all_data = []
     
     for ag_name, ag_alloc in agents_list:
@@ -212,12 +217,12 @@ if page == "Overview 🌐":
         fig_comp.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=300, margin=dict(l=0,r=0,t=20,b=0), legend=dict(font=dict(color=TEXT_LIGHT)))
         fig_comp.update_xaxes(color=TEXT_LIGHT, showgrid=False); fig_comp.update_yaxes(color=TEXT_LIGHT, title="Crescita %", showgrid=True, gridcolor="#555")
         
-        # UPDATE: width="stretch" per il grafico
+        # FIX 2: use_container_width=True -> width="stretch"
         st.plotly_chart(fig_comp, width="stretch")
     else: st.info("Dati insufficienti.")
 
 else:
-    agent = page.split(" ")[0]
+    agent = page.split(" ")[0] 
     alloc = ALLOCATION_BRUCE
     if agent == "Barry": alloc = ALLOCATION_BARRY
     elif agent == "Wally": alloc = ALLOCATION_WALLY
@@ -255,7 +260,7 @@ else:
             fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=220, margin=dict(l=0,r=0,t=30,b=0))
             fig.update_xaxes(color=TEXT_LIGHT); fig.update_yaxes(color=TEXT_LIGHT)
             
-            # UPDATE: width="stretch"
+            # FIX 3: use_container_width=True -> width="stretch"
             st.plotly_chart(fig, width="stretch")
 
     st.subheader(f"⚔️ Posizioni Attive ({agent})")
