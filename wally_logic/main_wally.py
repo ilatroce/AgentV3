@@ -18,9 +18,9 @@ TICKER = "AVAX"
 LOOP_SPEED = 10        # 10s
 
 # Money Management
-TOTAL_ALLOCATION_USD = 20.0   
-LEVERAGE = 20                 
-GRID_LINES = 52               
+TOTAL_ALLOCATION_USD = 25.0   
+LEVERAGE = 25                 
+GRID_LINES = 40               
 RANGE_PCT = 0.01              # Range +/- 1%
 
 # Calcoli Griglia
