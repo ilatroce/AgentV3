@@ -20,7 +20,7 @@ LOOP_SPEED = 15         # Controllo veloce (5s)
 # Money Management
 TOTAL_ALLOCATION_USD = 25.0   
 LEVERAGE = 25                 # Leva 25x (Aggressivo)
-GRID_LEVELS = 10              # 10 Livelli per lato (Pyramiding)
+GRID_LEVELS = 52              # 10 Livelli per lato (Pyramiding)
 BREAKOUT_TARGET_PCT = 0.01    # Target 1% (Take Profit Finale)
 
 # Calcolo Step: 1% / 10 livelli = 0.1% a scalino
