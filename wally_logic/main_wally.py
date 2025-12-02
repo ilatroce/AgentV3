@@ -15,11 +15,11 @@ load_dotenv()
 # --- CONFIGURAZIONE WALLY: MAKER GRID (AVAX) 🧪 ---
 AGENT_NAME = "Wally"
 TICKER = "AVAX"        
-LOOP_SPEED = 10        # Controllo ogni 10 secondi (Maker non deve essere frenetico)
+LOOP_SPEED = 15        # Controllo ogni 10 secondi (Maker non deve essere frenetico)
 
 # Money Management
-TOTAL_ALLOCATION_USD = 20.0   
-LEVERAGE = 20                 
+TOTAL_ALLOCATION_USD = 25.0   
+LEVERAGE = 25                 
 GRID_LINES = 52               # 52 Linee Limit
 RANGE_PCT = 0.01              # Range +/- 1%
 
