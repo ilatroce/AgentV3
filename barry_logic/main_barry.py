@@ -18,7 +18,7 @@ TICKER = "SUI"
 LOOP_SPEED = 15        
 
 # Money Management
-TOTAL_ALLOCATION = 50.0       
+TOTAL_ALLOCATION = 25.0       
 MAX_POSITIONS = 10            
 LEVERAGE = 20                 
 
@@ -26,8 +26,8 @@ LEVERAGE = 20
 SIZE_PER_TRADE_USD = (TOTAL_ALLOCATION / MAX_POSITIONS) * LEVERAGE
 
 # Strategia
-BUY_OFFSET = 0.01   
-TP_TARGET = 0.02    
+BUY_OFFSET = 0.001   
+TP_TARGET = 0.002    
 
 def get_open_orders(bot, ticker):
     try:
