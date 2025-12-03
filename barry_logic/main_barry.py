@@ -19,7 +19,7 @@ LOOP_SPEED = 15        # Controllo ogni 15 secondi
 
 # Money Management
 TOTAL_MARGIN = 50.0    # Budget Reale (Margin)
-LEVERAGE = 20          # Leva 20x (IMPORTANTE: Settare su Hyperliquid)
+LEVERAGE = 20          # Leva 20x
 GRID_LINES = 30        # 30 Griglie totali
 
 # Range Operativo
@@ -30,12 +30,11 @@ CENTER_PRICE = 1.69    # Punto di partenza
 # Calcoli Geometrici
 TOTAL_NOTIONAL = TOTAL_MARGIN * LEVERAGE  # Potenza di fuoco (es. 1000$)
 SIZE_PER_GRID_USD = TOTAL_NOTIONAL / GRID_LINES # Es. 33$ a ordine
-GRID_STEP = (RANGE_TOP - RANGE_BOTTOM) / GRID_LINES # Step di prezzo (~0.015$)
+GRID_STEP = (RANGE_TOP - RANGE_BOTTOM) / GRID_LINES # Step di prezzo
 
 def get_grid_levels():
     """Genera i prezzi esatti della griglia da Bottom a Top"""
     levels = []
-    # Genera 30 livelli partendo dal basso
     for i in range(GRID_LINES + 1):
         price = RANGE_BOTTOM + (GRID_STEP * i)
         levels.append(round(price, 4))
@@ -44,12 +43,15 @@ def get_grid_levels():
 def cancel_all_orders(bot):
     """Pulisce il book"""
     try:
-        open_orders = bot.info.open_orders(bot.account.address)
+        # FIX: Usa account_address invece di account.address
+        addr = bot.account_address
+        open_orders = bot.info.open_orders(addr)
         for order in open_orders:
             if order['coin'] == TICKER:
                 bot.exchange.cancel(TICKER, order['oid'])
         print(f"🧹 [CLEANUP] Ordini cancellati.")
-    except: pass
+    except Exception as e: 
+        print(f"Err cleanup: {e}")
 
 def run_barry():
     print(f"⚡ [Barry ShortGrid] Avvio su {TICKER}.")
@@ -61,19 +63,16 @@ def run_barry():
     bot = HyperLiquidTrader(private_key, wallet, testnet=False)
 
     # 1. Setup Iniziale: Startup Short?
-    # Il prompt dice: "aperto al centro con metà posizione"
-    # Se siamo flat e vicini al centro, apriamo subito uno Short Market per avere "inventario" da ricomprare sotto.
     account = bot.get_account_status()
     my_pos = next((p for p in account["open_positions"] if p["symbol"] == TICKER), None)
-    
-    current_price = bot.get_market_price(TICKER)
     
     if not my_pos:
         print("⚡ [STARTUP] Nessuna posizione. Apro SHORT iniziale (Metà allocazione)...")
         # Metà allocazione = 15 grid * size
         startup_size = SIZE_PER_GRID_USD * (GRID_LINES / 2)
+        # Usa market entry per l'inizio
         bot.execute_order(TICKER, "SHORT", startup_size)
-        time.sleep(2) # Attendi esecuzione
+        time.sleep(2) 
     
     # Genera i livelli fissi della griglia
     grid_prices = get_grid_levels()
@@ -84,16 +83,14 @@ def run_barry():
             current_price = bot.get_market_price(TICKER)
             if current_price == 0: time.sleep(5); continue
             
-            print(f"\n⚡ [CHECK] Prezzo: {current_price:.4f} (Range: {RANGE_BOTTOM}-{RANGE_TOP})")
+            # print(f"\n⚡ [CHECK] Prezzo: {current_price:.4f}")
 
             # SE FUORI RANGE -> CHIUDI TUTTO E MUORI
             if current_price >= RANGE_TOP or current_price <= RANGE_BOTTOM:
                 print(f"💀 [KILL SWITCH] Prezzo fuori range! Chiudo tutto e termino.")
                 
-                # 1. Cancella Ordini
                 cancel_all_orders(bot)
                 
-                # 2. Chiudi Posizione
                 account = bot.get_account_status()
                 my_pos = next((p for p in account["open_positions"] if p["symbol"] == TICKER), None)
                 if my_pos:
@@ -108,11 +105,11 @@ def run_barry():
                     db_utils.log_bot_operation(payload)
                 
                 print("👋 Addio. Programma terminato.")
-                sys.exit(0) # TERMINA IL PROGRAMMA
+                sys.exit(0) 
 
             # B. Riconciliazione Griglia (Logic Loop)
-            # Scarica ordini aperti e posizione attuale
-            open_orders = bot.info.open_orders(bot.account.address)
+            # FIX: Usa account_address anche qui
+            open_orders = bot.info.open_orders(bot.account_address)
             my_orders = [o for o in open_orders if o['coin'] == TICKER]
             my_order_prices = [float(o['limitPx']) for o in my_orders]
             
@@ -125,42 +122,35 @@ def run_barry():
             # Cicla attraverso tutti i livelli ideali della griglia
             for level_price in grid_prices:
                 
-                # Arrotondamento per confronto
                 level_price = round(level_price, 4)
                 
                 # C'è già un ordine qui?
-                # Usiamo una tolleranza minima per float comparison
                 has_order = any(abs(p - level_price) < 0.0001 for p in my_order_prices)
                 
                 if has_order:
-                    continue # Ordine già presente, tutto ok
+                    continue 
                 
                 # --- LOGICA PIAZZAMENTO ---
-                amount_coin = round(SIZE_PER_GRID_USD / level_price, 1) # Arrotonda a 1 dec
+                # Calcola coin amount
+                amount_coin = round(SIZE_PER_GRID_USD / level_price, 1) 
                 
-                # 1. LIVELLO SOPRA IL PREZZO -> Dobbiamo avere un LIMIT SELL (Short)
+                # 1. LIVELLO SOPRA IL PREZZO -> LIMIT SELL (Short)
                 if level_price > current_price:
-                    # Piazza Short per ricaricare la griglia
                     print(f"   ➕ Piazzamento: SELL (Short) @ {level_price}")
-                    res = bot.exchange.order(TICKER, False, amount_coin, level_price, {"limit": {"tif": "Gtc"}})
+                    # Usa funzione nativa per Limit Order
+                    bot.exchange.order(TICKER, False, amount_coin, level_price, {"limit": {"tif": "Gtc"}})
                     time.sleep(0.1)
                 
-                # 2. LIVELLO SOTTO IL PREZZO -> Dobbiamo avere un LIMIT BUY (Take Profit)
+                # 2. LIVELLO SOTTO IL PREZZO -> LIMIT BUY (Take Profit)
                 # SOLO se abbiamo posizione short aperta da coprire!
                 elif level_price < current_price:
-                    # Se abbiamo abbastanza short aperti per coprire questo buy
-                    # (Stimiamo grossolanamente per non andare net long)
                     if pos_size_coin > amount_coin: 
                         print(f"   ➕ Piazzamento: BUY (TP) @ {level_price}")
-                        res = bot.exchange.order(TICKER, True, amount_coin, level_price, {"limit": {"tif": "Gtc"}})
-                        # Scaliamo dalla size virtuale disponibile per i prossimi ordini del loop
+                        bot.exchange.order(TICKER, True, amount_coin, level_price, {"limit": {"tif": "Gtc"}})
+                        # Scaliamo virtualmente per non piazzare troppi buy
                         pos_size_coin -= amount_coin
                         time.sleep(0.1)
 
-            # C. Logica PnL (Se la posizione si è ridotta, abbiamo fatto profitto)
-            # Questo è complesso da tracciare perfettamente senza WebSocket, 
-            # ma possiamo loggare lo stato ogni tanto.
-            
         except Exception as e:
             print(f"Err Barry: {e}")
             traceback.print_exc()
