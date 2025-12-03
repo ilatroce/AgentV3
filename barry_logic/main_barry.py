@@ -12,180 +12,158 @@ import db_utils
 
 load_dotenv()
 
-# --- CONFIGURAZIONE BARRY: NEUTRAL GRID ⚡ ---
+# --- CONFIGURAZIONE BARRY: SHORT GRID MAKER ⚡ ---
 AGENT_NAME = "Barry"
 TICKER = "SUI"         
 LOOP_SPEED = 15        # Controllo ogni 15 secondi
 
 # Money Management
-TOTAL_ALLOCATION_USD = 25.0   # Capitale Reale usato
-LEVERAGE = 25                 # Leva 20x
-GRID_LINES = 52               # 52 Linee
-RANGE_PCT = 0.01              # Range +/- 1%
+TOTAL_MARGIN = 50.0    # Budget Reale (Margin)
+LEVERAGE = 20          # Leva 20x (IMPORTANTE: Settare su Hyperliquid)
+GRID_LINES = 30        # 30 Griglie totali
 
-# Calcoli Griglia
-STEP_PCT = (RANGE_PCT * 2) / GRID_LINES 
+# Range Operativo
+RANGE_TOP = 1.90
+RANGE_BOTTOM = 1.45
+CENTER_PRICE = 1.69    # Punto di partenza
 
-# Gatekeeper
-VOLATILITY_LOOKBACK_MIN = 15 
-VOLATILITY_THRESHOLD = 0.01  # 1%
-PAUSE_DURATION = 900         # 15 Minuti pausa
+# Calcoli Geometrici
+TOTAL_NOTIONAL = TOTAL_MARGIN * LEVERAGE  # Potenza di fuoco (es. 1000$)
+SIZE_PER_GRID_USD = TOTAL_NOTIONAL / GRID_LINES # Es. 33$ a ordine
+GRID_STEP = (RANGE_TOP - RANGE_BOTTOM) / GRID_LINES # Step di prezzo (~0.015$)
 
-def check_volatility_gatekeeper(bot, ticker):
-    """Controlla volatilità. True = Safe, False = Danger."""
+def get_grid_levels():
+    """Genera i prezzi esatti della griglia da Bottom a Top"""
+    levels = []
+    # Genera 30 livelli partendo dal basso
+    for i in range(GRID_LINES + 1):
+        price = RANGE_BOTTOM + (GRID_STEP * i)
+        levels.append(round(price, 4))
+    return levels
+
+def cancel_all_orders(bot):
+    """Pulisce il book"""
     try:
-        df = bot.get_candles(ticker, interval="1m", limit=VOLATILITY_LOOKBACK_MIN)
-        if df.empty: return True 
-        
-        high_max = df['high'].max()
-        low_min = df['low'].min()
-        
-        volatility = (high_max - low_min) / low_min
-        
-        if volatility > VOLATILITY_THRESHOLD:
-            print(f"⛔ [GATEKEEPER] Volatilità eccessiva ({volatility*100:.2f}%)!")
-            return False
-        return True
-    except Exception as e:
-        print(f"Err Gatekeeper: {e}")
-        return True
+        open_orders = bot.info.open_orders(bot.account.address)
+        for order in open_orders:
+            if order['coin'] == TICKER:
+                bot.exchange.cancel(TICKER, order['oid'])
+        print(f"🧹 [CLEANUP] Ordini cancellati.")
+    except: pass
 
 def run_barry():
-    print(f"⚡ [Barry Grid] Avvio su {TICKER}. Range +/- {RANGE_PCT*100}%.")
+    print(f"⚡ [Barry ShortGrid] Avvio su {TICKER}.")
+    print(f"   Range: {RANGE_BOTTOM} - {RANGE_TOP} | Centro: {CENTER_PRICE}")
+    print(f"   Size per livello: ${SIZE_PER_GRID_USD:.2f}")
     
     private_key = os.getenv("PRIVATE_KEY")
     wallet = os.getenv("WALLET_ADDRESS").lower()
     bot = HyperLiquidTrader(private_key, wallet, testnet=False)
 
-    center_price = None 
-    triggered_levels = set() 
+    # 1. Setup Iniziale: Startup Short?
+    # Il prompt dice: "aperto al centro con metà posizione"
+    # Se siamo flat e vicini al centro, apriamo subito uno Short Market per avere "inventario" da ricomprare sotto.
+    account = bot.get_account_status()
+    my_pos = next((p for p in account["open_positions"] if p["symbol"] == TICKER), None)
+    
+    current_price = bot.get_market_price(TICKER)
+    
+    if not my_pos:
+        print("⚡ [STARTUP] Nessuna posizione. Apro SHORT iniziale (Metà allocazione)...")
+        # Metà allocazione = 15 grid * size
+        startup_size = SIZE_PER_GRID_USD * (GRID_LINES / 2)
+        bot.execute_order(TICKER, "SHORT", startup_size)
+        time.sleep(2) # Attendi esecuzione
+    
+    # Genera i livelli fissi della griglia
+    grid_prices = get_grid_levels()
     
     while True:
         try:
-            # 1. Recupera Prezzo
+            # A. Controllo Prezzo e Range (KILL SWITCH)
             current_price = bot.get_market_price(TICKER)
-            if current_price == 0:
-                time.sleep(5); continue
-
-            # 2. Gatekeeper + SAFETY FLUSH (La modifica è qui)
-            is_safe = check_volatility_gatekeeper(bot, TICKER)
+            if current_price == 0: time.sleep(5); continue
             
-            if not is_safe:
-                print("⚠️ MERCATO PERICOLOSO RILEVATO.")
+            print(f"\n⚡ [CHECK] Prezzo: {current_price:.4f} (Range: {RANGE_BOTTOM}-{RANGE_TOP})")
+
+            # SE FUORI RANGE -> CHIUDI TUTTO E MUORI
+            if current_price >= RANGE_TOP or current_price <= RANGE_BOTTOM:
+                print(f"💀 [KILL SWITCH] Prezzo fuori range! Chiudo tutto e termino.")
                 
-                # Controllo se ho posizioni da chiudere ("Flush")
+                # 1. Cancella Ordini
+                cancel_all_orders(bot)
+                
+                # 2. Chiudi Posizione
                 account = bot.get_account_status()
-                positions = account.get("open_positions", [])
-                my_pos = next((p for p in positions if p["symbol"] == TICKER), None)
-                
+                my_pos = next((p for p in account["open_positions"] if p["symbol"] == TICKER), None)
                 if my_pos:
-                    pnl_usd = float(my_pos['pnl_usd'])
-                    print(f"💀 [FLUSH] Chiudo posizione {my_pos['side']} d'emergenza prima della pausa.")
+                    pnl = float(my_pos['pnl_usd'])
                     bot.close_position(TICKER)
                     
                     payload = {
                         "operation": "CLOSE", "symbol": TICKER, 
-                        "reason": "Gatekeeper Flush (High Volatility)", 
-                        "pnl": pnl_usd, "agent": AGENT_NAME
+                        "reason": "Out of Range (Kill Switch)", 
+                        "pnl": pnl, "agent": AGENT_NAME
                     }
                     db_utils.log_bot_operation(payload)
-                else:
-                    print("   Nessuna posizione aperta. Sono al sicuro.")
-
-                print(f"⏳ [PAUSA] Dormo per {PAUSE_DURATION/60} minuti.")
-                time.sleep(PAUSE_DURATION)
                 
-                # Reset Totale al risveglio
-                center_price = None
-                triggered_levels = set()
-                continue 
+                print("👋 Addio. Programma terminato.")
+                sys.exit(0) # TERMINA IL PROGRAMMA
 
-            # 3. Gestione Stato Account (Se siamo Safe)
+            # B. Riconciliazione Griglia (Logic Loop)
+            # Scarica ordini aperti e posizione attuale
+            open_orders = bot.info.open_orders(bot.account.address)
+            my_orders = [o for o in open_orders if o['coin'] == TICKER]
+            my_order_prices = [float(o['limitPx']) for o in my_orders]
+            
             account = bot.get_account_status()
-            positions = account.get("open_positions", [])
-            my_pos = next((p for p in positions if p["symbol"] == TICKER), None)
+            my_pos = next((p for p in account["open_positions"] if p["symbol"] == TICKER), None)
             
-            # --- SETUP CENTRO GRIGLIA ---
-            if not my_pos:
-                if center_price is None:
-                    center_price = current_price
-                    triggered_levels = set()
-                    print(f"🎯 [GRID START] Nuovo Centro: ${center_price:.4f}")
-            else:
-                if center_price is None:
-                    center_price = float(my_pos['entry_price'])
-                    print(f"🎯 [GRID RESUME] Centro recuperato: ${center_price:.4f}")
-
-            # Calcoli
-            upper_limit = center_price * (1 + RANGE_PCT)
-            lower_limit = center_price * (1 - RANGE_PCT)
+            # Size della posizione attuale (in coin)
+            pos_size_coin = float(my_pos['size']) if my_pos else 0.0
             
-            # Debug
-            # print(f"⚡ P: {current_price:.4f} | C: {center_price:.4f}")
-
-            # --- AZIONE 1: STOP LOSS (Fuori Range) ---
-            if current_price > upper_limit or current_price < lower_limit:
-                if my_pos:
-                    pnl_usd = float(my_pos['pnl_usd'])
-                    print(f"💀 [STOP LOSS] Prezzo fuori range. CHIUDO TUTTO.")
-                    bot.close_position(TICKER)
-                    
-                    payload = {
-                        "operation": "CLOSE", "symbol": TICKER, 
-                        "reason": "Grid Range Broken", "pnl": pnl_usd, "agent": AGENT_NAME
-                    }
-                    db_utils.log_bot_operation(payload)
+            # Cicla attraverso tutti i livelli ideali della griglia
+            for level_price in grid_prices:
                 
-                center_price = None
-                triggered_levels = set()
-                time.sleep(5)
-                continue
+                # Arrotondamento per confronto
+                level_price = round(level_price, 4)
+                
+                # C'è già un ordine qui?
+                # Usiamo una tolleranza minima per float comparison
+                has_order = any(abs(p - level_price) < 0.0001 for p in my_order_prices)
+                
+                if has_order:
+                    continue # Ordine già presente, tutto ok
+                
+                # --- LOGICA PIAZZAMENTO ---
+                amount_coin = round(SIZE_PER_GRID_USD / level_price, 1) # Arrotonda a 1 dec
+                
+                # 1. LIVELLO SOPRA IL PREZZO -> Dobbiamo avere un LIMIT SELL (Short)
+                if level_price > current_price:
+                    # Piazza Short per ricaricare la griglia
+                    print(f"   ➕ Piazzamento: SELL (Short) @ {level_price}")
+                    res = bot.exchange.order(TICKER, False, amount_coin, level_price, {"limit": {"tif": "Gtc"}})
+                    time.sleep(0.1)
+                
+                # 2. LIVELLO SOTTO IL PREZZO -> Dobbiamo avere un LIMIT BUY (Take Profit)
+                # SOLO se abbiamo posizione short aperta da coprire!
+                elif level_price < current_price:
+                    # Se abbiamo abbastanza short aperti per coprire questo buy
+                    # (Stimiamo grossolanamente per non andare net long)
+                    if pos_size_coin > amount_coin: 
+                        print(f"   ➕ Piazzamento: BUY (TP) @ {level_price}")
+                        res = bot.exchange.order(TICKER, True, amount_coin, level_price, {"limit": {"tif": "Gtc"}})
+                        # Scaliamo dalla size virtuale disponibile per i prossimi ordini del loop
+                        pos_size_coin -= amount_coin
+                        time.sleep(0.1)
 
-            # --- AZIONE 2: ESECUZIONE GRIGLIA ---
-            pct_diff = (current_price - center_price) / center_price
-            current_level_index = int(pct_diff / STEP_PCT)
+            # C. Logica PnL (Se la posizione si è ridotta, abbiamo fatto profitto)
+            # Questo è complesso da tracciare perfettamente senza WebSocket, 
+            # ma possiamo loggare lo stato ogni tanto.
             
-            if current_level_index != 0 and current_level_index not in triggered_levels:
-                
-                bullet_size_usd = (TOTAL_ALLOCATION_USD * LEVERAGE) / GRID_LINES
-                
-                if current_level_index > 0: # Sopra -> SHORT
-                    direction = "SHORT"
-                    print(f"🔴 [GRID SELL] Linea +{current_level_index}")
-                    bot.execute_order(TICKER, "SHORT", bullet_size_usd) 
-                    
-                else: # Sotto -> LONG
-                    direction = "LONG"
-                    print(f"🟢 [GRID BUY] Linea {current_level_index}")
-                    bot.execute_order(TICKER, "LONG", bullet_size_usd) 
-
-                triggered_levels.add(current_level_index)
-                
-                # Yo-Yo Reset
-                levels_to_remove = []
-                for lvl in triggered_levels:
-                    if abs(lvl - current_level_index) >= 2: 
-                        levels_to_remove.append(lvl)
-                
-                for lvl in levels_to_remove:
-                    triggered_levels.remove(lvl)
-                    step_profit = bullet_size_usd * STEP_PCT
-                    payload = {
-                        "operation": "CLOSE_PARTIAL", "symbol": TICKER, "agent": AGENT_NAME,
-                        "reason": f"Grid Return Lvl {lvl}", "pnl": step_profit
-                    }
-                    db_utils.log_bot_operation(payload)
-
-                if direction:
-                    payload = {
-                        "operation": "OPEN", "symbol": TICKER, "direction": direction,
-                        "reason": f"Grid Line {current_level_index}", "agent": AGENT_NAME,
-                        "target_portion_of_balance": 0.01
-                    }
-                    db_utils.log_bot_operation(payload)
-
         except Exception as e:
             print(f"Err Barry: {e}")
+            traceback.print_exc()
             time.sleep(5)
             
         time.sleep(LOOP_SPEED)
