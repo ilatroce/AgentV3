@@ -12,144 +12,149 @@ import db_utils
 
 load_dotenv()
 
-# --- CONFIGURAZIONE BARRY: SHORT GRID MAKER ⚡ ---
+# --- CONFIGURAZIONE BARRY: SIMPLE MAKER ACCUMULATOR ⚡ ---
 AGENT_NAME = "Barry"
 TICKER = "SUI"         
 LOOP_SPEED = 15        # Controllo ogni 15 secondi
 
 # Money Management
-TOTAL_MARGIN = 50.0    # Budget Reale (Margin)
-LEVERAGE = 20          # Leva 20x
-GRID_LINES = 30        # 30 Griglie totali
+TOTAL_ALLOCATION = 50.0       # Budget Totale
+MAX_POSITIONS = 10            # Numero massimo di "slot" (posizioni contemporanee)
+SIZE_PER_TRADE = TOTAL_ALLOCATION / MAX_POSITIONS # 5$ a trade
 
-# Range Operativo
-RANGE_TOP = 1.90
-RANGE_BOTTOM = 1.45
-CENTER_PRICE = 1.69    # Punto di partenza
+# Strategia di Prezzo (Valori Assoluti)
+BUY_OFFSET = 0.01   # Compra 1 centesimo SOTTO il prezzo attuale
+TP_TARGET = 0.02    # Vendi 2 centesimi SOPRA il prezzo di entrata
 
-# Calcoli Geometrici
-TOTAL_NOTIONAL = TOTAL_MARGIN * LEVERAGE  # Potenza di fuoco (es. 1000$)
-SIZE_PER_GRID_USD = TOTAL_NOTIONAL / GRID_LINES # Es. 33$ a ordine
-GRID_STEP = (RANGE_TOP - RANGE_BOTTOM) / GRID_LINES # Step di prezzo
-
-def get_grid_levels():
-    """Genera i prezzi esatti della griglia da Bottom a Top"""
-    levels = []
-    for i in range(GRID_LINES + 1):
-        price = RANGE_BOTTOM + (GRID_STEP * i)
-        levels.append(round(price, 4))
-    return levels
-
-def cancel_all_orders(bot):
-    """Pulisce il book"""
+def get_open_orders(bot, ticker):
+    """Recupera gli ordini Limit aperti su Hyperliquid"""
     try:
-        # FIX: Usa account_address invece di account.address
-        addr = bot.account_address
-        open_orders = bot.info.open_orders(addr)
-        for order in open_orders:
-            if order['coin'] == TICKER:
-                bot.exchange.cancel(TICKER, order['oid'])
-        print(f"🧹 [CLEANUP] Ordini cancellati.")
-    except Exception as e: 
-        print(f"Err cleanup: {e}")
+        orders = bot.info.open_orders(bot.account.address)
+        return [o for o in orders if o['coin'] == ticker]
+    except: return []
 
 def run_barry():
-    print(f"⚡ [Barry ShortGrid] Avvio su {TICKER}.")
-    print(f"   Range: {RANGE_BOTTOM} - {RANGE_TOP} | Centro: {CENTER_PRICE}")
-    print(f"   Size per livello: ${SIZE_PER_GRID_USD:.2f}")
+    print(f"⚡ [Barry Accumulator] Avvio su {TICKER}.")
+    print(f"   Budget: ${TOTAL_ALLOCATION} ({MAX_POSITIONS} slots da ${SIZE_PER_TRADE})")
+    print(f"   Strat: Buy @ -{BUY_OFFSET}$ | Sell @ +{TP_TARGET}$")
     
     private_key = os.getenv("PRIVATE_KEY")
     wallet = os.getenv("WALLET_ADDRESS").lower()
     bot = HyperLiquidTrader(private_key, wallet, testnet=False)
 
-    # 1. Setup Iniziale: Startup Short?
-    account = bot.get_account_status()
-    my_pos = next((p for p in account["open_positions"] if p["symbol"] == TICKER), None)
-    
-    if not my_pos:
-        print("⚡ [STARTUP] Nessuna posizione. Apro SHORT iniziale (Metà allocazione)...")
-        # Metà allocazione = 15 grid * size
-        startup_size = SIZE_PER_GRID_USD * (GRID_LINES / 2)
-        # Usa market entry per l'inizio
-        bot.execute_order(TICKER, "SHORT", startup_size)
-        time.sleep(2) 
-    
-    # Genera i livelli fissi della griglia
-    grid_prices = get_grid_levels()
-    
     while True:
         try:
-            # A. Controllo Prezzo e Range (KILL SWITCH)
+            # 1. Recupera Prezzo e Stato
             current_price = bot.get_market_price(TICKER)
             if current_price == 0: time.sleep(5); continue
             
-            # print(f"\n⚡ [CHECK] Prezzo: {current_price:.4f}")
-
-            # SE FUORI RANGE -> CHIUDI TUTTO E MUORI
-            if current_price >= RANGE_TOP or current_price <= RANGE_BOTTOM:
-                print(f"💀 [KILL SWITCH] Prezzo fuori range! Chiudo tutto e termino.")
-                
-                cancel_all_orders(bot)
-                
-                account = bot.get_account_status()
-                my_pos = next((p for p in account["open_positions"] if p["symbol"] == TICKER), None)
-                if my_pos:
-                    pnl = float(my_pos['pnl_usd'])
-                    bot.close_position(TICKER)
-                    
-                    payload = {
-                        "operation": "CLOSE", "symbol": TICKER, 
-                        "reason": "Out of Range (Kill Switch)", 
-                        "pnl": pnl, "agent": AGENT_NAME
-                    }
-                    db_utils.log_bot_operation(payload)
-                
-                print("👋 Addio. Programma terminato.")
-                sys.exit(0) 
-
-            # B. Riconciliazione Griglia (Logic Loop)
-            # FIX: Usa account_address anche qui
-            open_orders = bot.info.open_orders(bot.account_address)
-            my_orders = [o for o in open_orders if o['coin'] == TICKER]
-            my_order_prices = [float(o['limitPx']) for o in my_orders]
-            
+            # Recupera posizioni e ordini pendenti
             account = bot.get_account_status()
+            # La posizione su HL è aggregata (netta). 
+            # Barry deve gestire "virtualmente" i suoi slot se HL aggrega tutto.
+            # MA, se usiamo ordini Limit di TP, HL li gestisce nel book.
+            
+            # Per semplificare la logica "10 slot", guardiamo quanti ordini di BUY sono aperti
+            # e quanta posizione abbiamo già in pancia.
+            
             my_pos = next((p for p in account["open_positions"] if p["symbol"] == TICKER), None)
+            open_orders = get_open_orders(bot, TICKER)
             
-            # Size della posizione attuale (in coin)
-            pos_size_coin = float(my_pos['size']) if my_pos else 0.0
+            # Conta gli ordini di acquisto pendenti
+            buy_orders = [o for o in open_orders if o['side'] == 'B']
+            sell_orders = [o for o in open_orders if o['side'] == 'A']
             
-            # Cicla attraverso tutti i livelli ideali della griglia
-            for level_price in grid_prices:
+            # Calcola quanti slot sono occupati
+            # Slot occupati = (Soldi investiti nella posizione / 5$) + (Ordini di acquisto pendenti)
+            current_position_usd = (float(my_pos['size']) * current_price) if my_pos else 0
+            
+            # Arrotondiamo per capire quanti "pacchetti" da 5$ abbiamo
+            filled_slots = round(current_position_usd / SIZE_PER_TRADE)
+            pending_buy_slots = len(buy_orders)
+            
+            total_busy_slots = filled_slots + pending_buy_slots
+            
+            print(f"\n⚡ P: {current_price:.4f} | Slots: {total_busy_slots}/{MAX_POSITIONS} (Pos: {filled_slots}, Pending Buy: {pending_buy_slots})")
+
+            action_taken = False # Flag per fare solo 1 azione a giro
+
+            # --- FASE 1: PIAZZARE TAKE PROFIT (Priorità assoluta) ---
+            # Se abbiamo una posizione aperta, dobbiamo assicurarci che ci sia un ordine di vendita (TP).
+            # Se la posizione è grande (es. 3 slot), dobbiamo avere ordini di vendita equivalenti.
+            
+            # Calcolo semplice: Se abbiamo posizione ma NON abbiamo abbastanza ordini di vendita, piazziamo TP.
+            if my_pos and not action_taken:
+                pos_size = float(my_pos['size'])
+                # Somma della size di tutti gli ordini di vendita aperti
+                sell_orders_size = sum(float(o['sz']) for o in sell_orders)
                 
-                level_price = round(level_price, 4)
+                # Se c'è della posizione "scoperta" (senza TP)
+                uncovered_size = pos_size - sell_orders_size
                 
-                # C'è già un ordine qui?
-                has_order = any(abs(p - level_price) < 0.0001 for p in my_order_prices)
+                # Tolleranza minima (per evitare ordini di polvere)
+                if uncovered_size > (SIZE_PER_TRADE / current_price * 0.5):
+                    print(f"🛡️ [DEFENSE] Trovata posizione scoperta di {uncovered_size:.2f} {TICKER}.")
+                    
+                    # Calcolo prezzo TP: Entry Price medio + 0.02$
+                    # Nota: Entry Price medio cambia se compriamo a prezzi diversi (DCA).
+                    # Per uscire in profitto globale, usiamo Entry Price + TP.
+                    entry_px = float(my_pos['entry_price'])
+                    tp_price = round(entry_px + TP_TARGET, 4)
+                    
+                    # Se il prezzo attuale è già sopra il TP (improbabile ma possibile), vendi subito un po' sopra
+                    if tp_price <= current_price:
+                        tp_price = current_price * 1.005 # +0.5% sopra market
+                    
+                    # Arrotonda quantità
+                    amount = round(uncovered_size, 1)
+                    
+                    if amount > 0:
+                        print(f"   Piazzo TP LIMIT SELL: {amount} @ {tp_price}")
+                        res = bot.exchange.order(TICKER, False, amount, tp_price, {"limit": {"tif": "Gtc"}})
+                        
+                        if res['status'] == 'ok':
+                            payload = {"operation": "CLOSE_PARTIAL", "symbol": TICKER, "reason": "TP Placement", "agent": AGENT_NAME}
+                            db_utils.log_bot_operation(payload)
+                            action_taken = True
+
+            # --- FASE 2: PIAZZARE NUOVI ACQUISTI (Accumulo) ---
+            # Solo se abbiamo slot liberi e non abbiamo fatto altre azioni
+            if total_busy_slots < MAX_POSITIONS and not action_taken:
                 
-                if has_order:
-                    continue 
+                # Calcolo Prezzo Maker: Attuale - 0.01$
+                # Per essere sicuri di essere Maker e non Taker, stiamo un filo sotto il Bid.
+                target_buy_price = round(current_price - BUY_OFFSET, 4)
                 
-                # --- LOGICA PIAZZAMENTO ---
-                # Calcola coin amount
-                amount_coin = round(SIZE_PER_GRID_USD / level_price, 1) 
+                # Controllo anti-spam: C'è già un ordine vicino a questo prezzo?
+                # Se ho già un ordine a 1.50 e il prezzo è 1.51 (target 1.50), non ne metto un altro uguale.
+                too_close = False
+                for o in buy_orders:
+                    open_px = float(o['limitPx'])
+                    if abs(open_px - target_buy_price) < 0.005: # Se c'è un ordine entro mezzo centesimo
+                        too_close = True
+                        break
                 
-                # 1. LIVELLO SOPRA IL PREZZO -> LIMIT SELL (Short)
-                if level_price > current_price:
-                    print(f"   ➕ Piazzamento: SELL (Short) @ {level_price}")
-                    # Usa funzione nativa per Limit Order
-                    bot.exchange.order(TICKER, False, amount_coin, level_price, {"limit": {"tif": "Gtc"}})
-                    time.sleep(0.1)
-                
-                # 2. LIVELLO SOTTO IL PREZZO -> LIMIT BUY (Take Profit)
-                # SOLO se abbiamo posizione short aperta da coprire!
-                elif level_price < current_price:
-                    if pos_size_coin > amount_coin: 
-                        print(f"   ➕ Piazzamento: BUY (TP) @ {level_price}")
-                        bot.exchange.order(TICKER, True, amount_coin, level_price, {"limit": {"tif": "Gtc"}})
-                        # Scaliamo virtualmente per non piazzare troppi buy
-                        pos_size_coin -= amount_coin
-                        time.sleep(0.1)
+                if not too_close:
+                    amount = round(SIZE_PER_TRADE / target_buy_price, 1)
+                    print(f"🔫 [ATTACK] Slot libero! Piazzo LIMIT BUY: {amount} @ {target_buy_price}")
+                    
+                    res = bot.exchange.order(TICKER, True, amount, target_buy_price, {"limit": {"tif": "Gtc"}})
+                    
+                    if res['status'] == 'ok':
+                        payload = {"operation": "OPEN", "symbol": TICKER, "direction": "LONG", "reason": "Maker Accumulation", "agent": AGENT_NAME}
+                        db_utils.log_bot_operation(payload)
+                        action_taken = True
+                else:
+                    print(f"   Attesa: Ordine di acquisto già presente in zona ${target_buy_price}.")
+
+            # --- FASE 3: PULIZIA (Opzionale) ---
+            # Se il prezzo è scappato via (es. è salito molto), i vecchi ordini di acquisto sono inutili e occupano slot?
+            # Per ora teniamoli ("Fishing"), magari crolla e li prende.
+            # Se però il prezzo sale di 10 centesimi, quegli ordini sono lontanissimi.
+            
+            # Se non abbiamo fatto nulla, dormiamo.
+            if not action_taken:
+                print("   Nessuna azione necessaria.")
 
         except Exception as e:
             print(f"Err Barry: {e}")
