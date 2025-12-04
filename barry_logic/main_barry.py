@@ -12,122 +12,125 @@ import db_utils
 
 load_dotenv()
 
-# --- CONFIGURAZIONE BARRY: SAFE LONG ONLY 🛡️ ---
+# --- CONFIGURAZIONE BARRY: TAKER ACCUMULATOR ⚡ ---
 AGENT_NAME = "Barry"
 TICKER = "SUI"         
-LOOP_SPEED = 15        
+LOOP_SPEED = 15        # 15 Secondi
 
 # Money Management
-TOTAL_ALLOCATION = 25.0       
+TOTAL_ALLOCATION = 50.0       
 MAX_POSITIONS = 10            
 LEVERAGE = 20                 
 
-# Size per Slot
+# Size per Slot (Nozionale)
+# 50$ / 10 = 5$ Reali -> x20 = 100$ Nozionali
 SIZE_PER_TRADE_USD = (TOTAL_ALLOCATION / MAX_POSITIONS) * LEVERAGE
 
-# Strategia
-BUY_OFFSET = 0.001   
-TP_TARGET = 0.002    
-
-def get_open_orders(bot, ticker):
-    try:
-        orders = bot.info.open_orders(bot.account.address)
-        return [o for o in orders if o['coin'] == ticker]
-    except: return []
+# Strategia (Prezzi Assoluti)
+BUY_OFFSET = 0.01   # Compra ogni volta che scende di 1 cent
+TP_TARGET = 0.02    # Vendi quando sei in profitto di 2 cent sul prezzo medio
 
 def run_barry():
-    print(f"⚡ [Barry Safe] Avvio su {TICKER} (Reduce-Only Mode).")
+    print(f"⚡ [Barry Taker] Avvio su {TICKER}. Mode: MARKET ORDERS.")
+    print(f"   Size per trade: ${SIZE_PER_TRADE_USD:.2f}")
     
     private_key = os.getenv("PRIVATE_KEY")
     wallet = os.getenv("WALLET_ADDRESS").lower()
     bot = HyperLiquidTrader(private_key, wallet, testnet=False)
 
+    # Variabile per ricordare l'ultimo prezzo di acquisto (per non comprare sempre sullo stesso livello)
+    last_buy_price = None
+
     while True:
         try:
-            # 1. Recupera Prezzo
+            # 1. Dati Mercato
             current_price = bot.get_market_price(TICKER)
             if current_price == 0: time.sleep(5); continue
             
-            # 2. Stato
+            # 2. Dati Posizione
             account = bot.get_account_status()
             my_pos = next((p for p in account["open_positions"] if p["symbol"] == TICKER), None)
-            open_orders = get_open_orders(bot, TICKER)
             
-            buy_orders = [o for o in open_orders if o['side'] == 'B']
-            sell_orders = [o for o in open_orders if o['side'] == 'A'] # Questi sono i TP
-            
-            # Dati Posizione
+            # --- SICUREZZA ANTI-SHORT ---
+            # Se per miracolo siamo Short, chiudiamo tutto immediatamente.
+            if my_pos and my_pos['side'] == 'SHORT':
+                print("🚨 [ALLARME] Trovata posizione SHORT! Chiudo subito.")
+                bot.close_position(TICKER)
+                time.sleep(2); continue
+
+            # Dati utili
             pos_size_coin = float(my_pos['size']) if my_pos else 0.0
             entry_price = float(my_pos['entry_price']) if my_pos else 0.0
+            pnl_usd = float(my_pos['pnl_usd']) if my_pos else 0.0
             
-            # Calcolo Slot
-            current_position_usd = pos_size_coin * current_price
-            filled_slots = round(current_position_usd / SIZE_PER_TRADE_USD)
-            pending_buy_slots = len(buy_orders)
-            total_busy_slots = filled_slots + pending_buy_slots
+            # Calcolo Slot Usati
+            current_notional = pos_size_coin * current_price
+            slots_used = round(current_notional / SIZE_PER_TRADE_USD)
             
-            print(f"\n⚡ P: {current_price:.4f} | Slots: {total_busy_slots}/{MAX_POSITIONS} (Pos: {filled_slots}, Buy: {pending_buy_slots})")
+            print(f"\n⚡ P: {current_price:.4f} | Avg Entry: {entry_price:.4f} | Slot: {slots_used}/{MAX_POSITIONS}")
 
             action_taken = False
 
-            # --- FASE 1: TAKE PROFIT (Reduce Only) ---
-            # Se abbiamo merce (pos_size > 0), dobbiamo avere un ordine di vendita che la copre.
-            
-            # Quantità già in vendita (TP attivi)
-            size_in_sell_orders = sum(float(o['sz']) for o in sell_orders)
-            
-            # Quanta roba è "nuda" (senza TP)?
-            uncovered_size = pos_size_coin - size_in_sell_orders
-            
-            # Se c'è roba scoperta (tolleranza 2$)
-            if uncovered_size * current_price > 2.0:
-                print(f"🛡️ [TP CHECK] Posizione scoperta: {uncovered_size:.2f} SUI")
+            # --- AZIONE 1: TAKE PROFIT (Vendi tutto o una parte) ---
+            # Se il prezzo attuale è sopra il nostro prezzo medio + target
+            if my_pos and current_price >= (entry_price + TP_TARGET):
+                print(f"💰 [TAKE PROFIT] Prezzo {current_price} > Target {entry_price + TP_TARGET:.4f}")
                 
-                # Prezzo TP: Entry + Target
-                tp_price = round(entry_price + TP_TARGET, 4)
-                if tp_price <= current_price: tp_price = current_price * 1.002
+                # Vendiamo 1 Slot (o tutto se siamo alla fine)
+                sell_size_usd = SIZE_PER_TRADE_USD
                 
-                amount = round(uncovered_size, 1)
+                # CONTROLLO CRITICO: Non vendere più di quello che hai!
+                max_sell_usd = pos_size_coin * current_price * 0.99 # 99% per sicurezza arrotondamento
                 
-                if amount > 0:
-                    print(f"   Piazzo LIMIT SELL (Reduce-Only): {amount} @ {tp_price}")
-                    
-                    # Usa il parametro "reduceOnly": True
-                    # In Hyperliquid SDK grezzo si passa nelle opzioni
-                    res = bot.exchange.order(TICKER, False, amount, tp_price, {"limit": {"tif": "Alo"}, "reduceOnly": True})
-                    
-                    if res['status'] == 'ok':
-                        statuses = res.get('response', {}).get('data', {}).get('statuses', [{}])
-                        if 'error' not in statuses[0]:
-                            print("   ✅ TP Piazzato.")
-                            action_taken = True
-                        else:
-                            print(f"   ❌ Errore TP: {statuses[0]}")
-
-            # --- FASE 2: ACQUISTO (Buy Limit) ---
-            if total_busy_slots < MAX_POSITIONS and not action_taken:
+                if sell_size_usd > max_sell_usd:
+                    sell_size_usd = max_sell_usd # Vendi solo quello che hai
                 
-                target_buy_price = round(current_price - BUY_OFFSET, 4)
-                
-                too_close = False
-                for o in buy_orders:
-                    if abs(float(o['limitPx']) - target_buy_price) < 0.005:
-                        too_close = True; break
-                
-                if not too_close:
-                    amount = round(SIZE_PER_TRADE_USD / target_buy_price, 1)
-                    
-                    print(f"🔫 [BUY] Piazzo Limit Long: {amount} @ {target_buy_price}")
-                    
-                    res = bot.exchange.order(TICKER, True, amount, target_buy_price, {"limit": {"tif": "Alo"}})
-                    
-                    if res['status'] == 'ok':
-                        statuses = res.get('response', {}).get('data', {}).get('statuses', [{}])
-                        if 'error' not in statuses[0]:
-                            db_utils.log_bot_operation({"operation": "OPEN", "symbol": TICKER, "direction": "LONG", "reason": "Maker Accumulation", "agent": AGENT_NAME})
-                            action_taken = True
+                # Se è rimasto poco (polvere), chiudi tutto
+                if max_sell_usd < 10.0: # Meno di 10$ totali rimasti
+                    print("   Chiusura totale (rimanenza bassa).")
+                    bot.close_position(TICKER)
                 else:
-                    print(f"   Attesa: Ordine Buy già in zona.")
+                    print(f"   Vendita Parziale (Market): ${sell_size_usd:.2f}")
+                    # SHORT su un Long esistente = VENDITA (Chiude posizione)
+                    bot.execute_order(TICKER, "SHORT", sell_size_usd)
+                
+                # Log
+                payload = {"operation": "CLOSE_PARTIAL", "symbol": TICKER, "reason": "Taker TP", "pnl": pnl_usd / slots_used if slots_used > 0 else 0, "agent": AGENT_NAME}
+                db_utils.log_bot_operation(payload)
+                
+                # Reset memoria acquisto per poter ricomprare se scende
+                last_buy_price = current_price 
+                action_taken = True
+                time.sleep(2)
+
+            # --- AZIONE 2: BUY THE DIP (Accumulo) ---
+            if not action_taken and slots_used < MAX_POSITIONS:
+                
+                should_buy = False
+                
+                # Caso A: Prima entrata assoluta
+                if not my_pos:
+                    should_buy = True
+                    print("🆕 Prima entrata.")
+                
+                # Caso B: Mediare il prezzo (DCA)
+                # Compriamo se il prezzo è sceso di BUY_OFFSET rispetto all'ultimo acquisto o all'entry price
+                else:
+                    reference_price = last_buy_price if last_buy_price else entry_price
+                    # Se il prezzo è sceso di 1 centesimo dall'ultimo riferimento
+                    if current_price <= (reference_price - BUY_OFFSET):
+                        should_buy = True
+                        print(f"📉 Dip rilevato (-{BUY_OFFSET}).")
+
+                if should_buy:
+                    print(f"🔫 [BUY] Market Order: ${SIZE_PER_TRADE_USD:.2f}")
+                    bot.execute_order(TICKER, "LONG", SIZE_PER_TRADE_USD)
+                    
+                    last_buy_price = current_price
+                    
+                    payload = {"operation": "OPEN", "symbol": TICKER, "direction": "LONG", "reason": "Taker Buy", "agent": AGENT_NAME, "target_portion_of_balance": 0.01}
+                    db_utils.log_bot_operation(payload)
+                    time.sleep(2)
 
         except Exception as e:
             print(f"Err Barry: {e}")
