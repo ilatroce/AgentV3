@@ -66,7 +66,7 @@ def manage_asset(bot, ticker, mode, price, pnl_trigger=None):
             # Se sì, NON TOCCARE NULLA.
             valid_tp_exists = False
             for o in trigger_orders:
-                if float(o['sz']) >= (pos_size * 0.9):
+                if float(o['sz']):
                     valid_tp_exists = True
                     break
             
