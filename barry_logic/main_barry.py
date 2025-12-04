@@ -12,7 +12,7 @@ import db_utils
 
 load_dotenv()
 
-# --- CONFIGURAZIONE BARRY: TAKER ACCUMULATOR ⚡ ---
+# --- CONFIGURAZIONE BARRY: TAKER ACCUMULATOR (SUI) ⚡ ---
 AGENT_NAME = "Barry"
 TICKER = "SUI"         
 LOOP_SPEED = 15        # 15 Secondi
@@ -26,7 +26,7 @@ LEVERAGE = 20
 # 50$ / 10 = 5$ Reali -> x20 = 100$ Nozionali
 SIZE_PER_TRADE_USD = (TOTAL_ALLOCATION / MAX_POSITIONS) * LEVERAGE
 
-# Strategia (Prezzi Assoluti)
+# Strategia (Prezzi Assoluti per SUI)
 BUY_OFFSET = 0.01   # Compra ogni volta che scende di 1 cent
 TP_TARGET = 0.02    # Vendi quando sei in profitto di 2 cent sul prezzo medio
 
@@ -38,7 +38,6 @@ def run_barry():
     wallet = os.getenv("WALLET_ADDRESS").lower()
     bot = HyperLiquidTrader(private_key, wallet, testnet=False)
 
-    # Variabile per ricordare l'ultimo prezzo di acquisto (per non comprare sempre sullo stesso livello)
     last_buy_price = None
 
     while True:
@@ -52,7 +51,6 @@ def run_barry():
             my_pos = next((p for p in account["open_positions"] if p["symbol"] == TICKER), None)
             
             # --- SICUREZZA ANTI-SHORT ---
-            # Se per miracolo siamo Short, chiudiamo tutto immediatamente.
             if my_pos and my_pos['side'] == 'SHORT':
                 print("🚨 [ALLARME] Trovata posizione SHORT! Chiudo subito.")
                 bot.close_position(TICKER)
@@ -72,33 +70,25 @@ def run_barry():
             action_taken = False
 
             # --- AZIONE 1: TAKE PROFIT (Vendi tutto o una parte) ---
-            # Se il prezzo attuale è sopra il nostro prezzo medio + target
             if my_pos and current_price >= (entry_price + TP_TARGET):
                 print(f"💰 [TAKE PROFIT] Prezzo {current_price} > Target {entry_price + TP_TARGET:.4f}")
                 
-                # Vendiamo 1 Slot (o tutto se siamo alla fine)
                 sell_size_usd = SIZE_PER_TRADE_USD
-                
-                # CONTROLLO CRITICO: Non vendere più di quello che hai!
-                max_sell_usd = pos_size_coin * current_price * 0.99 # 99% per sicurezza arrotondamento
+                max_sell_usd = pos_size_coin * current_price * 0.99 
                 
                 if sell_size_usd > max_sell_usd:
-                    sell_size_usd = max_sell_usd # Vendi solo quello che hai
+                    sell_size_usd = max_sell_usd 
                 
-                # Se è rimasto poco (polvere), chiudi tutto
-                if max_sell_usd < 10.0: # Meno di 10$ totali rimasti
+                if max_sell_usd < 10.0: 
                     print("   Chiusura totale (rimanenza bassa).")
                     bot.close_position(TICKER)
                 else:
                     print(f"   Vendita Parziale (Market): ${sell_size_usd:.2f}")
-                    # SHORT su un Long esistente = VENDITA (Chiude posizione)
                     bot.execute_order(TICKER, "SHORT", sell_size_usd)
                 
-                # Log
                 payload = {"operation": "CLOSE_PARTIAL", "symbol": TICKER, "reason": "Taker TP", "pnl": pnl_usd / slots_used if slots_used > 0 else 0, "agent": AGENT_NAME}
                 db_utils.log_bot_operation(payload)
                 
-                # Reset memoria acquisto per poter ricomprare se scende
                 last_buy_price = current_price 
                 action_taken = True
                 time.sleep(2)
@@ -108,16 +98,14 @@ def run_barry():
                 
                 should_buy = False
                 
-                # Caso A: Prima entrata assoluta
+                # Caso A: Prima entrata
                 if not my_pos:
                     should_buy = True
                     print("🆕 Prima entrata.")
                 
-                # Caso B: Mediare il prezzo (DCA)
-                # Compriamo se il prezzo è sceso di BUY_OFFSET rispetto all'ultimo acquisto o all'entry price
+                # Caso B: Mediare (DCA)
                 else:
                     reference_price = last_buy_price if last_buy_price else entry_price
-                    # Se il prezzo è sceso di 1 centesimo dall'ultimo riferimento
                     if current_price <= (reference_price - BUY_OFFSET):
                         should_buy = True
                         print(f"📉 Dip rilevato (-{BUY_OFFSET}).")
