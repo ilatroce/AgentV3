@@ -56,7 +56,7 @@ POSITION_SIZE_USD = 20.0 # 10$ a posizione
 
 SUI_OFFSET = 0.001   
 
-SUI_TP = 0.002
+SUI_TP = 0.003
 
 
 
@@ -64,7 +64,7 @@ SUI_TP = 0.002
 
 SOL_OFFSET = 0.03
 
-SOL_TP = 0.06
+SOL_TP = 0.07
 
 
 
@@ -194,7 +194,7 @@ def manage_asset(bot, ticker, mode, price, pnl_trigger=None):
 
                     print(f"♻️ [{ticker}] Aggiorno TP (Vecchio: {trig_px} -> Nuovo: {target_px})")
 
-                    bot.exchange.cancel(ticker, o['oid'])
+                    # bot.exchange.cancel(ticker, o['oid'])
 
             
 
