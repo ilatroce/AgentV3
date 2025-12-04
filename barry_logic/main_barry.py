@@ -26,10 +26,10 @@ POSITION_SIZE_USD = 10.0
 
 # Strategia
 SUI_BUY_OFFSET = 0.001   
-SUI_TP_TARGET = 0.02     
+SUI_TP_TARGET = 0.003     
 
-SOL_SELL_OFFSET = 0.01   
-SOL_TP_TARGET = 0.02     
+SOL_SELL_OFFSET = 0.03   
+SOL_TP_TARGET = 0.7     
 
 # --- NUOVO: SAFETY PARAMETERS ---
 MAX_COMBINED_LOSS = -1.0 # Se perdiamo > 1$ in totale, intervenire
