@@ -146,7 +146,7 @@ def manage_asset(bot, ticker, mode, price, pnl_trigger=None):
 
                 print(f"🧹 [{ticker}] In posizione. Cancello ordini Limit superflui.")
 
-                for o in limit_orders: bot.exchange.cancel(ticker, o['oid'])
+                for o in limit_orders: # bot.exchange.cancel(ticker, o['oid'])
 
             
 
