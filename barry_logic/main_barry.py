@@ -35,9 +35,7 @@ SOL_TP = 0.06
 
 def manage_asset(bot, ticker, mode, price, pnl_trigger=None):
     """
-    Gestisce un singolo asset (SUI o SOL).
-    mode: 'LONG' (per SUI) o 'SHORT' (per SOL)
-    pnl_trigger: Se serve per attivare l'hedge (solo per SOL)
+    Gestisce un singolo asset (SUI o SOL) con FIX per 'orderType'.
     """
     try:
         # 1. Analisi Stato
@@ -45,12 +43,29 @@ def manage_asset(bot, ticker, mode, price, pnl_trigger=None):
         my_pos = next((p for p in account["open_positions"] if p["symbol"] == ticker), None)
         
         # Recupera ordini aperti
+        # FIX: Usa account_address
         orders = bot.info.open_orders(bot.account_address)
         my_orders = [o for o in orders if o['coin'] == ticker]
         
-        # Separa Limit (Entry) da Trigger (TP)
-        limit_orders = [o for o in my_orders if o['orderType'] == 'Limit']
-        trigger_orders = [o for o in my_orders if 'trigger' in o['orderType']]
+        # --- FIX ROBUSTEZZA ORDINI ---
+        limit_orders = []
+        trigger_orders = []
+        
+        for o in my_orders:
+            # Hyperliquid ritorna 'orderType' o 'type'. Cerchiamo di capire cos'è.
+            o_type = o.get('orderType', o.get('type', 'Limit'))
+            
+            # Se è un dizionario (es. {'trigger': ...}), lo convertiamo in stringa per controllo
+            if isinstance(o_type, dict):
+                if 'trigger' in o_type:
+                    trigger_orders.append(o)
+                else:
+                    limit_orders.append(o) # Assumiamo Limit se non è trigger
+            elif 'trigger' in str(o_type).lower():
+                trigger_orders.append(o)
+            else:
+                limit_orders.append(o)
+        # -----------------------------
 
         # --- CASO A: ABBIAMO UNA POSIZIONE APERTA ---
         if my_pos:
@@ -60,75 +75,66 @@ def manage_asset(bot, ticker, mode, price, pnl_trigger=None):
                 for o in limit_orders: bot.exchange.cancel(ticker, o['oid'])
             
             # 2. Gestione Take Profit (Trigger)
-            # Dobbiamo avere ESATTAMENTE 1 Trigger Order corretto
             entry_px = float(my_pos['entry_price'])
             size = float(my_pos['size'])
             
             # Calcolo Prezzo TP
             if mode == 'LONG':
                 target_px = round(entry_px + SUI_TP, 4)
-                # Sicurezza: Se prezzo > target, il TP market scatta subito (bene)
-                is_buy_close = False # Chiudo Long vendendo
+                is_buy_close = False 
             else: # SHORT
-                target_px = round(entry_px - SOL_TP, 2) # SOL ha meno decimali
-                is_buy_close = True # Chiudo Short comprando
+                target_px = round(entry_px - SOL_TP, 2) 
+                is_buy_close = True 
 
             # Controlliamo se esiste già il TP corretto
             tp_exists = False
             for o in trigger_orders:
-                # Tolleranza prezzo minima
-                if abs(float(o['triggerPx']) - target_px) < (target_px * 0.001) and float(o['sz']) == size:
+                # Per i trigger orders, il prezzo è in 'triggerPx'
+                trig_px = float(o.get('triggerPx', o.get('limitPx', 0)))
+                
+                if abs(trig_px - target_px) < (target_px * 0.001) and float(o['sz']) == size:
                     tp_exists = True
                 else:
-                    # Se c'è un TP vecchio o sbagliato, cancellalo
-                    print(f"♻️ [{ticker}] Aggiorno TP (Vecchio: {o['triggerPx']} -> Nuovo: {target_px})")
+                    print(f"♻️ [{ticker}] Aggiorno TP (Vecchio: {trig_px} -> Nuovo: {target_px})")
                     bot.exchange.cancel(ticker, o['oid'])
             
             if not tp_exists:
                 print(f"🛡️ [{ticker}] Piazzo Take Profit Trigger @ {target_px}")
+                # Assicurati che place_take_profit esista in hyperliquid_trader.py!
                 bot.place_take_profit(ticker, is_buy_close, size, target_px)
 
-        # --- CASO B: SIAMO FLAT (NESSUNA POSIZIONE) ---
+        # --- CASO B: SIAMO FLAT ---
         else:
-            # 1. Pulizia: Non devono esserci Trigger (TP) se siamo flat
             if trigger_orders:
                 print(f"🧹 [{ticker}] Flat. Cancello Trigger orfani.")
                 for o in trigger_orders: bot.exchange.cancel(ticker, o['oid'])
 
-            # 2. Logica di Entrata
             should_enter = True
             
-            # Per SOL (Hedge), entriamo SOLO se SUI perde soldi (pnl_trigger < 0)
+            # Hedge Logic
             if mode == 'SHORT' and (pnl_trigger is None or pnl_trigger > -0.05):
                 should_enter = False
-                # Se c'erano ordini pendenti di hedge, cancellali perché non servono più
                 if limit_orders:
                     print(f"🟢 [{ticker}] Hedge non necessario. Cancello ordini.")
                     for o in limit_orders: bot.exchange.cancel(ticker, o['oid'])
-                return # Esci
+                return 
 
             if should_enter:
-                # Calcolo Target Entry
-                if mode == 'LONG': # SUI
+                if mode == 'LONG': 
                     target_entry = round(price - SUI_OFFSET, 4)
                     is_buy_entry = True
-                else: # SHORT (SOL)
+                else: 
                     target_entry = round(price + SOL_OFFSET, 2)
                     is_buy_entry = False
 
-                # Calcolo Size
                 amount = round(POSITION_SIZE_USD / target_entry, 1)
 
-                # TRAILING ENTRY: Controlla se l'ordine esistente è "buono"
                 order_ok = False
                 if limit_orders:
-                    # Ne teniamo solo 1, cancelliamo gli altri se ce ne sono troppi
                     if len(limit_orders) > 1:
                         for o in limit_orders: bot.exchange.cancel(ticker, o['oid'])
                     else:
-                        # Controlla se il prezzo è ancora valido
                         current_order_px = float(limit_orders[0]['limitPx'])
-                        # Se la differenza è piccola, tienilo. Se è grande, sposta.
                         if abs(current_order_px - target_entry) < (target_entry * 0.0005): 
                             order_ok = True
                         else:
@@ -137,13 +143,13 @@ def manage_asset(bot, ticker, mode, price, pnl_trigger=None):
                 
                 if not order_ok:
                     print(f"🔫 [{ticker}] Piazzo Limit {mode}: {amount} @ {target_entry}")
-                    # Order normale GTC (Good till Cancel)
                     bot.exchange.order(ticker, is_buy_entry, amount, target_entry, {"limit": {"tif": "Gtc"}})
                     
                     db_utils.log_bot_operation({"operation": "OPEN", "symbol": ticker, "direction": mode, "reason": "Trailing Entry", "agent": AGENT_NAME})
 
     except Exception as e:
         print(f"Err Manage {ticker}: {e}")
+        # traceback.print_exc() # Scommenta per debug profondo
 
 def run_barry():
     print(f"⚔️ [Barry Smart] Avvio Trailing Entry + Native TP.")
