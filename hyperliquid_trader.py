@@ -406,6 +406,27 @@ class HyperLiquidTrader:
         except Exception as e:
             print(f"Errore close_position: {e}")
             return None
+    
+    # --- NUOVA FUNZIONE: TAKE PROFIT TRIGGER ---
+    def place_take_profit(self, ticker: str, is_buy: bool, amount: float, trigger_price: float):
+        """Piazza un ordine Trigger (TP) Market"""
+        try:
+            # Formato specifico richiesto
+            order_type = {
+                "trigger": {
+                    "triggerPx": float(trigger_price),
+                    "isMarket": True,
+                    "tpsl": "tp"
+                }
+            }
+            
+            # Nota: reduceOnly=True è fondamentale per i TP
+            print(f"[TP] Set Trigger {ticker}: {amount} @ {trigger_price}")
+            return self.exchange.order(ticker, is_buy, amount, trigger_price, order_type, reduce_only=True)
+            
+        except Exception as e:
+            print(f"Errore place_take_profit: {e}")
+            return None
     # -------------------------------------------
     def get_candles(self, coin: str, interval: str = "15m", limit: int = 50):
         """
