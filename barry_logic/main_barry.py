@@ -22,7 +22,7 @@ TICKER_HEDGE = "SOL"   # Short Strategy
 
 # Money Management
 LEVERAGE = 20          
-POSITION_SIZE_USD = 10.0 # 10$ a posizione
+POSITION_SIZE_USD = 20.0 # 10$ a posizione
 
 # Strategia
 # SUI: Compra a -0.001, Vende a +0.002
