@@ -289,6 +289,7 @@ def manage_asset(bot, ticker, mode, price, pnl_trigger=None):
                     print(f"🔫 [{ticker}] Piazzo Limit {mode}: {amount} @ {target_entry}")
 
                     bot.exchange.order(ticker, is_buy_entry, amount, target_entry, {"limit": {"tif": "Gtc"}})
+                    bot.place_take_profit(ticker, is_buy_close, size, target_px)
 
                     
 
