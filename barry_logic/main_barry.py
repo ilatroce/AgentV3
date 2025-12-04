@@ -12,7 +12,7 @@ import db_utils
 
 load_dotenv()
 
-# --- CONFIGURAZIONE BARRY: SINGLE SHOT HEDGER ⚔️ ---
+# --- CONFIGURAZIONE BARRY: STABLE HEDGER ⚔️ ---
 AGENT_NAME = "Barry"
 LOOP_SPEED = 15        
 
@@ -22,99 +22,90 @@ TICKER_HEDGE = "SOL"   # Short Strategy
 
 # Money Management
 LEVERAGE = 20          
-POSITION_SIZE_USD = 20.0 # 10$ a posizione
+POSITION_SIZE_USD = 10.0 # 10$ a posizione
 
 # Strategia
-# SUI: Compra a -0.001, Vende a +0.002
 SUI_OFFSET = 0.001   
-SUI_TP = 0.003
+SUI_TP = 0.002
 
-# SOL: Shorta a +0.01, Chiude a -0.02
-SOL_OFFSET = 0.03
-SOL_TP = 0.07
+SOL_OFFSET = 0.01
+SOL_TP = 0.02
 
 def manage_asset(bot, ticker, mode, price, pnl_trigger=None):
-    """
-    Gestisce un singolo asset (SUI o SOL) con FIX per 'orderType'.
-    """
     try:
         # 1. Analisi Stato
         account = bot.get_account_status()
         my_pos = next((p for p in account["open_positions"] if p["symbol"] == ticker), None)
         
-        # Recupera ordini aperti
-        # FIX: Usa account_address
+        # Recupera ordini aperti (Usa account_address per sicurezza)
         orders = bot.info.open_orders(bot.account_address)
         my_orders = [o for o in orders if o['coin'] == ticker]
         
-        # --- FIX ROBUSTEZZA ORDINI ---
         limit_orders = []
         trigger_orders = []
         
         for o in my_orders:
-            # Hyperliquid ritorna 'orderType' o 'type'. Cerchiamo di capire cos'è.
             o_type = o.get('orderType', o.get('type', 'Limit'))
-            
-            # Se è un dizionario (es. {'trigger': ...}), lo convertiamo in stringa per controllo
-            if isinstance(o_type, dict):
-                if 'trigger' in o_type:
-                    trigger_orders.append(o)
-                else:
-                    limit_orders.append(o) # Assumiamo Limit se non è trigger
-            elif 'trigger' in str(o_type).lower():
+            if isinstance(o_type, dict) and 'trigger' in o_type:
+                trigger_orders.append(o)
+            elif isinstance(o_type, str) and 'trigger' in o_type.lower():
                 trigger_orders.append(o)
             else:
                 limit_orders.append(o)
-        # -----------------------------
 
         # --- CASO A: ABBIAMO UNA POSIZIONE APERTA ---
         if my_pos:
-            # 1. Pulizia: Non devono esserci ordini Limit (Entry) se siamo già dentro
+            # 1. Pulizia: Se siamo dentro, cancelliamo gli ordini di ENTRATA (Limit)
             if limit_orders:
-                print(f"🧹 [{ticker}] In posizione. Cancello ordini Limit superflui.")
+                print(f"🧹 [{ticker}] In posizione. Cancello Limit Entry.")
                 for o in limit_orders: bot.exchange.cancel(ticker, o['oid'])
             
-            # 2. Gestione Take Profit (Trigger)
-            entry_px = float(my_pos['entry_price'])
+            # 2. Gestione Take Profit (Trigger) - LOGICA SET AND FORGET
             size = float(my_pos['size'])
             
-            # Calcolo Prezzo TP
-            if mode == 'LONG':
-                target_px = round(entry_px + SUI_TP, 4)
-                is_buy_close = False 
-            else: # SHORT
-                target_px = round(entry_px - SOL_TP, 2) 
-                is_buy_close = True 
-
-            # Controlliamo se esiste già il TP corretto
-            tp_exists = False
+            # C'è già un TP valido?
+            tp_ok = False
             for o in trigger_orders:
-                # Per i trigger orders, il prezzo è in 'triggerPx'
-                trig_px = float(o.get('triggerPx', o.get('limitPx', 0)))
-                
-                if abs(trig_px - target_px) < (target_px * 0.001) and float(o['sz']) == size:
-                    tp_exists = True
-                else:
-                    print(f"♻️ [{ticker}] Aggiorno TP (Vecchio: {trig_px} -> Nuovo: {target_px})")
-                    bot.exchange.cancel(ticker, o['oid'])
+                # Controlliamo SOLO se la size corrisponde. Il prezzo lo ignoriamo (lasciamo quello vecchio).
+                # Questo evita il "ricalcolo continuo" che spostava il TP in perdita.
+                if float(o['sz']) == size:
+                    tp_ok = True
+                    # print(f"🛡️ [{ticker}] TP già attivo @ {o['triggerPx']}. Non tocco.")
+                    break
             
-            if not tp_exists:
-                print(f"🛡️ [{ticker}] Piazzo Take Profit Trigger @ {target_px}")
-                # Assicurati che place_take_profit esista in hyperliquid_trader.py!
+            # Se ci sono TP con size sbagliata (vecchi residui), cancellali
+            if not tp_ok and trigger_orders:
+                print(f"♻️ [{ticker}] TP size errata. Resetto.")
+                for o in trigger_orders: bot.exchange.cancel(ticker, o['oid'])
+
+            # Se non c'è nessun TP valido, piazzalo ORA
+            if not tp_ok and not trigger_orders:
+                entry_px = float(my_pos['entry_price'])
+                
+                if mode == 'LONG':
+                    target_px = round(entry_px + SUI_TP, 4)
+                    is_buy_close = False 
+                else: # SHORT
+                    target_px = round(entry_px - SOL_TP, 2)
+                    is_buy_close = True 
+
+                print(f"🛡️ [{ticker}] Piazzo NUOVO TP @ {target_px}")
                 bot.place_take_profit(ticker, is_buy_close, size, target_px)
 
         # --- CASO B: SIAMO FLAT ---
         else:
+            # 1. Pulizia: Se siamo Flat, cancelliamo i TP (Trigger) vecchi
             if trigger_orders:
                 print(f"🧹 [{ticker}] Flat. Cancello Trigger orfani.")
                 for o in trigger_orders: bot.exchange.cancel(ticker, o['oid'])
 
+            # 2. Logica Entrata (Trailing Entry)
             should_enter = True
             
-            # Hedge Logic
+            # Hedge Logic: Entra su SOL solo se SUI perde > 0.05$
             if mode == 'SHORT' and (pnl_trigger is None or pnl_trigger > -0.05):
                 should_enter = False
-                if limit_orders:
+                if limit_orders: # Se c'era un ordine di hedge pronto ma non serve più
                     print(f"🟢 [{ticker}] Hedge non necessario. Cancello ordini.")
                     for o in limit_orders: bot.exchange.cancel(ticker, o['oid'])
                 return 
@@ -129,16 +120,18 @@ def manage_asset(bot, ticker, mode, price, pnl_trigger=None):
 
                 amount = round(POSITION_SIZE_USD / target_entry, 1)
 
+                # TRAILING ENTRY: Qui aggiorniamo continuamente per inseguire il prezzo
                 order_ok = False
                 if limit_orders:
                     if len(limit_orders) > 1:
                         for o in limit_orders: bot.exchange.cancel(ticker, o['oid'])
                     else:
                         current_order_px = float(limit_orders[0]['limitPx'])
+                        # Se il prezzo si è spostato molto, aggiorna
                         if abs(current_order_px - target_entry) < (target_entry * 0.0005): 
                             order_ok = True
                         else:
-                            print(f"🔄 [{ticker}] Trailing Entry: {current_order_px} -> {target_entry}")
+                            # print(f"🔄 [{ticker}] Trailing Entry: {current_order_px} -> {target_entry}")
                             bot.exchange.cancel(ticker, limit_orders[0]['oid'])
                 
                 if not order_ok:
@@ -149,10 +142,9 @@ def manage_asset(bot, ticker, mode, price, pnl_trigger=None):
 
     except Exception as e:
         print(f"Err Manage {ticker}: {e}")
-        # traceback.print_exc() # Scommenta per debug profondo
 
 def run_barry():
-    print(f"⚔️ [Barry Smart] Avvio Trailing Entry + Native TP.")
+    print(f"⚔️ [Barry Stable] Avvio Trailing Entry + Static TP.")
     
     private_key = os.getenv("PRIVATE_KEY")
     wallet = os.getenv("WALLET_ADDRESS").lower()
@@ -160,22 +152,17 @@ def run_barry():
 
     while True:
         try:
-            # Dati Mercato
             p_sui = bot.get_market_price(TICKER_MAIN)
             p_sol = bot.get_market_price(TICKER_HEDGE)
             if p_sui == 0 or p_sol == 0: time.sleep(5); continue
 
-            # PnL Monitor per Hedge
             account = bot.get_account_status()
             pos_sui = next((p for p in account["open_positions"] if p["symbol"] == TICKER_MAIN), None)
             pnl_sui = float(pos_sui['pnl_usd']) if pos_sui else 0.0
             
             print(f"\n⚡ SUI: {p_sui} | SOL: {p_sol} | Hedge Trigger: {pnl_sui:.2f}")
 
-            # 1. Gestisci SUI (Main)
             manage_asset(bot, TICKER_MAIN, 'LONG', p_sui)
-            
-            # 2. Gestisci SOL (Hedge - attivato dal pnl di SUI)
             manage_asset(bot, TICKER_HEDGE, 'SHORT', p_sol, pnl_trigger=pnl_sui)
 
         except Exception as e:
