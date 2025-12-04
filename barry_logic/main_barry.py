@@ -62,9 +62,9 @@ SUI_TP = 0.003
 
 # SOL: Shorta a +0.01, Chiude a -0.02
 
-SOL_OFFSET = 0.03
+SOL_OFFSET = 0.07
 
-SOL_TP = 0.07
+SOL_TP = 0.22
 
 
 
