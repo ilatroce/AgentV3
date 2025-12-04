@@ -216,7 +216,7 @@ def manage_asset(bot, ticker, mode, price, pnl_trigger=None):
 
                 print(f"🧹 [{ticker}] Flat. Cancello Trigger orfani.")
 
-                for o in trigger_orders: bot.exchange.cancel(ticker, o['oid'])
+                # for o in trigger_orders: bot.exchange.cancel(ticker, o['oid'])
 
 
 
