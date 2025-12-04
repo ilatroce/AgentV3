@@ -30,8 +30,8 @@ SUI_OFFSET = 0.001
 SUI_TP = 0.002
 
 # SOL: Shorta a +0.01, Chiude a -0.02
-SOL_OFFSET = 0.01
-SOL_TP = 0.02
+SOL_OFFSET = 0.03
+SOL_TP = 0.06
 
 def manage_asset(bot, ticker, mode, price, pnl_trigger=None):
     """
