@@ -12,13 +12,13 @@ import db_utils
 
 load_dotenv()
 
-# --- CONFIGURAZIONE BARRY: ROCK SOLID HEDGER 🗿 ---
+# --- CONFIGURAZIONE BARRY: HEDGER (HANDS OFF TP) 🛡️ ---
 AGENT_NAME = "Barry"
 LOOP_SPEED = 15        
 
 # Asset
-TICKER_MAIN = "SUI"    # Long Strategy
-TICKER_HEDGE = "SOL"   # Short Strategy
+TICKER_MAIN = "SUI"    # Long
+TICKER_HEDGE = "SOL"   # Short
 
 # Money Management
 LEVERAGE = 20          
@@ -46,84 +46,73 @@ def manage_asset(bot, ticker, mode, price, pnl_trigger=None):
         
         for o in my_orders:
             o_type = o.get('orderType', o.get('type', 'Limit'))
-            if isinstance(o_type, dict) and 'trigger' in o_type:
-                trigger_orders.append(o)
-            elif isinstance(o_type, str) and 'trigger' in o_type.lower():
+            if (isinstance(o_type, dict) and 'trigger' in o_type) or \
+               (isinstance(o_type, str) and 'trigger' in o_type.lower()):
                 trigger_orders.append(o)
             else:
                 limit_orders.append(o)
 
-        # --- CASO A: ABBIAMO UNA POSIZIONE APERTA ---
+        # --- CASO A: POSIZIONE APERTA (Gestione TP) ---
         if my_pos:
-            # 1. Pulizia Limit: Se siamo dentro, cancelliamo gli ordini di ENTRATA
+            # 1. Pulizia: Cancella ordini di Entrata (Limit)
             if limit_orders:
                 print(f"🧹 [{ticker}] In posizione. Cancello Limit Entry.")
                 for o in limit_orders: bot.exchange.cancel(ticker, o['oid'])
             
-            # 2. Gestione Take Profit (Trigger) - STABILE
-            current_pos_size = float(my_pos['size'])
+            # 2. LOGICA "HANDS OFF" TP
+            pos_size = float(my_pos['size'])
             
-            # Cerchiamo se esiste UN ordine TP valido che copra la size
-            # Non ci interessa il prezzo esatto (lasciamo quello originale), basta che copra la size.
-            tp_found = None
-            
+            # C'è ALMENO UN TP valido (che copra almeno il 90% della size)?
+            # Se sì, NON TOCCARE NULLA.
+            valid_tp_exists = False
             for o in trigger_orders:
-                order_sz = float(o['sz'])
-                # Tolleranza 1% sulla size (per evitare problemi di arrotondamento)
-                if abs(order_sz - current_pos_size) < (current_pos_size * 0.01):
-                    tp_found = o
+                if float(o['sz']) >= (pos_size * 0.9):
+                    valid_tp_exists = True
                     break
             
-            # Se abbiamo trovato un TP valido, controlliamo se è l'unico
-            if tp_found:
-                # Se ce ne sono altri oltre a quello buono, cancellali (pulizia)
-                if len(trigger_orders) > 1:
-                    print(f"🧹 [{ticker}] Cancello TP duplicati.")
-                    for o in trigger_orders:
-                        if o['oid'] != tp_found['oid']:
-                            bot.exchange.cancel(ticker, o['oid'])
-                
-                # Tutto ok, NON FACCIAMO NULLA. Il TP resta dov'è.
-                # print(f"✅ [{ticker}] TP Stabile @ {tp_found['triggerPx']}")
-            
-            # Se NON abbiamo trovato un TP valido (o la size è cambiata troppo), piazziamone uno nuovo
-            else:
-                if trigger_orders:
-                    print(f"♻️ [{ticker}] Size cambiata. Resetto TP.")
-                    for o in trigger_orders: bot.exchange.cancel(ticker, o['oid'])
-                
-                entry_px = float(my_pos['entry_price'])
-                if mode == 'LONG':
-                    target_px = round(entry_px + SUI_TP, 4)
-                    is_buy_close = False 
-                else: # SHORT
-                    target_px = round(entry_px - SOL_TP, 2)
-                    is_buy_close = True 
+            if valid_tp_exists:
+                # print(f"✅ [{ticker}] TP Presente. Standby.")
+                return # ESCI SUBITO, NON FARE NULLA
 
-                # Safety: Il TP deve essere migliorativo rispetto al prezzo attuale
-                if mode == 'LONG' and target_px <= price: target_px = price * 1.002
-                if mode == 'SHORT' and target_px >= price: target_px = price * 0.998
-
-                print(f"🛡️ [{ticker}] Piazzo NUOVO TP @ {target_px} (Size: {current_pos_size})")
-                bot.place_take_profit(ticker, is_buy_close, current_pos_size, target_px)
-
-        # --- CASO B: SIAMO FLAT ---
-        else:
-            # 1. Pulizia Trigger: Se siamo Flat, cancelliamo TUTTI i TP
+            # Se siamo qui, significa che NON c'è nessun TP valido.
+            # Cancelliamo eventuali TP "spazzatura" (size troppo piccola)
             if trigger_orders:
-                print(f"🧹 [{ticker}] Flat. Cancello Trigger orfani.")
+                print(f"♻️ [{ticker}] TP inadeguato. Resetto.")
                 for o in trigger_orders: bot.exchange.cancel(ticker, o['oid'])
 
-            # 2. Logica Entrata (Trailing Entry)
-            should_enter = True
+            # Piazziamo il NUOVO TP una volta sola
+            entry_px = float(my_pos['entry_price'])
             
+            if mode == 'LONG':
+                target_px = round(entry_px + SUI_TP, 4)
+                is_buy_close = False 
+                # Safety: Il TP deve essere sopra il prezzo attuale
+                if target_px <= price: target_px = price * 1.002
+            else: # SHORT
+                target_px = round(entry_px - SOL_TP, 2)
+                is_buy_close = True 
+                if target_px >= price: target_px = price * 0.998
+
+            print(f"🛡️ [{ticker}] Piazzo TP @ {target_px}")
+            bot.place_take_profit(ticker, is_buy_close, pos_size, target_px)
+
+        # --- CASO B: SIAMO FLAT (Gestione Entry) ---
+        else:
+            # 1. Pulizia TP vecchi
+            if trigger_orders:
+                print(f"🧹 [{ticker}] Flat. Cancello TP.")
+                for o in trigger_orders: bot.exchange.cancel(ticker, o['oid'])
+
+            # 2. Logica Hedge Check
+            should_enter = True
             if mode == 'SHORT' and (pnl_trigger is None or pnl_trigger > -0.05):
                 should_enter = False
                 if limit_orders: 
-                    print(f"🟢 [{ticker}] Hedge non necessario. Cancello ordini.")
+                    print(f"🟢 [{ticker}] Hedge Off. Cancello ordini.")
                     for o in limit_orders: bot.exchange.cancel(ticker, o['oid'])
                 return 
 
+            # 3. Trailing Entry (Come prima)
             if should_enter:
                 if mode == 'LONG': 
                     target_entry = round(price - SUI_OFFSET, 4)
@@ -139,22 +128,24 @@ def manage_asset(bot, ticker, mode, price, pnl_trigger=None):
                     if len(limit_orders) > 1:
                         for o in limit_orders: bot.exchange.cancel(ticker, o['oid'])
                     else:
-                        current_order_px = float(limit_orders[0]['limitPx'])
-                        if abs(current_order_px - target_entry) < (target_entry * 0.0005): 
+                        current_px = float(limit_orders[0]['limitPx'])
+                        # Aggiorna solo se si sposta significativamente
+                        if abs(current_px - target_entry) < (target_entry * 0.0005): 
                             order_ok = True
                         else:
                             bot.exchange.cancel(ticker, limit_orders[0]['oid'])
                 
                 if not order_ok:
-                    print(f"🔫 [{ticker}] Piazzo Limit {mode}: {amount} @ {target_entry}")
+                    print(f"🔫 [{ticker}] Piazzo Entry Limit: {amount} @ {target_entry}")
                     bot.exchange.order(ticker, is_buy_entry, amount, target_entry, {"limit": {"tif": "Gtc"}})
+                    
                     db_utils.log_bot_operation({"operation": "OPEN", "symbol": ticker, "direction": mode, "reason": "Trailing Entry", "agent": AGENT_NAME})
 
     except Exception as e:
         print(f"Err Manage {ticker}: {e}")
 
 def run_barry():
-    print(f"⚔️ [Barry Stable] Avvio Trailing Entry + Rock Solid TP.")
+    print(f"⚔️ [Barry Hands-Off] Avvio SUI/SOL Hedge.")
     
     private_key = os.getenv("PRIVATE_KEY")
     wallet = os.getenv("WALLET_ADDRESS").lower()
