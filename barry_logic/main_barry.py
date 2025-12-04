@@ -27,8 +27,8 @@ LEVERAGE = 20
 SIZE_PER_TRADE_USD = (TOTAL_ALLOCATION / MAX_POSITIONS) * LEVERAGE
 
 # Strategia (Prezzi Assoluti per SUI)
-BUY_OFFSET = 0.01   # Compra ogni volta che scende di 1 cent
-TP_TARGET = 0.02    # Vendi quando sei in profitto di 2 cent sul prezzo medio
+BUY_OFFSET = 0.001   # Compra ogni volta che scende di 1 cent
+TP_TARGET = 0.002    # Vendi quando sei in profitto di 2 cent sul prezzo medio
 
 def run_barry():
     print(f"⚡ [Barry Taker] Avvio su {TICKER}. Mode: MARKET ORDERS.")
