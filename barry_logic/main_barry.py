@@ -27,11 +27,11 @@ POSITION_SIZE_USD = 20.0 # 10$ a posizione
 # Strategia
 # SUI: Compra a -0.001, Vende a +0.002
 SUI_OFFSET = 0.001   
-SUI_TP = 0.002
+SUI_TP = 0.003
 
 # SOL: Shorta a +0.01, Chiude a -0.02
 SOL_OFFSET = 0.03
-SOL_TP = 0.06
+SOL_TP = 0.07
 
 def manage_asset(bot, ticker, mode, price, pnl_trigger=None):
     """
