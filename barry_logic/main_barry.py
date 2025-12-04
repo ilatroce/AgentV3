@@ -45,7 +45,7 @@ def manage_asset(bot, ticker, mode, price, pnl_trigger=None):
         my_pos = next((p for p in account["open_positions"] if p["symbol"] == ticker), None)
         
         # Recupera ordini aperti
-        orders = bot.info.open_orders(bot.account.address)
+        orders = bot.info.open_orders(bot.account_address)
         my_orders = [o for o in orders if o['coin'] == ticker]
         
         # Separa Limit (Entry) da Trigger (TP)
