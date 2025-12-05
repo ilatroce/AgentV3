@@ -105,31 +105,14 @@ def manage_asset(bot, ticker, mode, price, pnl_trigger=None):
         
 
         for o in my_orders:
-
-            # Hyperliquid ritorna 'orderType' o 'type'. Cerchiamo di capire cos'è.
-
-            o_type = o.get('orderType', o.get('type', 'Limit'))
-
+            # Metodo infallibile: Se ha un prezzo di attivazione (triggerPx), è un Trigger Order.
+            # Nota: frontend_open_orders restituisce 'triggerPx' per i TP/SL.
             
-
-            # Se è un dizionario (es. {'trigger': ...}), lo convertiamo in stringa per controllo
-
-            if isinstance(o_type, dict):
-
-                if 'trigger' in o_type:
-
-                    trigger_orders.append(o)
-
-                else:
-
-                    limit_orders.append(o) # Assumiamo Limit se non è trigger
-
-            elif 'trigger' in str(o_type).lower():
-
+            if 'triggerPx' in o and float(o['triggerPx']) > 0:
                 trigger_orders.append(o)
-
-            else:
-
+            
+            # Se non ha triggerPx ma ha limitPx, è un Limit Order normale
+            elif 'limitPx' in o:
                 limit_orders.append(o)
 
         # -----------------------------
