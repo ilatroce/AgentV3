@@ -186,7 +186,7 @@ def manage_asset(bot, ticker, mode, price, pnl_trigger=None):
 
                 
 
-                if abs(trig_px - target_px) < (target_px * 0.001) and float(o['sz']) == size:
+                if trigger_orders:
 
                     tp_exists = True
 
