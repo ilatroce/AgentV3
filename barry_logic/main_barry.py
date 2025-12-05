@@ -90,8 +90,8 @@ def manage_asset(bot, ticker, mode, price, pnl_trigger=None):
 
         # FIX: Usa account_address
 
-        orders = bot.info.open_orders(bot.account_address)
-
+        # orders = bot.info.open_orders(bot.account_address)
+        orders = bot.info.frontend_open_orders(bot.account_address)
         my_orders = [o for o in orders if o['coin'] == ticker]
 
         
