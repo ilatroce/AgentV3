@@ -4,37 +4,39 @@ import time
 import traceback
 from dotenv import load_dotenv
 
+# Import root modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from hyperliquid_trader import HyperLiquidTrader
 import db_utils
 
 load_dotenv()
 
-# --- CONFIGURAZIONE WEAVER: LIQUIDITY PROVIDER 🕸️ ---
+# --- CONFIGURAZIONE WEAVER: SMART MM 🕸️ ---
 AGENT_NAME = "Weaver"
 TICKER = "SUI"
-LOOP_SPEED = 5  # Molto veloce
+LOOP_SPEED = 5  
 
 # Money Management
 TOTAL_ALLOCATION = 50.0  
-LEVERAGE = 10            # Leva bassa per sicurezza
-SIZE_PER_ORDER = 15.0    # Ordini piccoli ma continui
+LEVERAGE = 10            
+SIZE_PER_ORDER = 15.0    # Size standard
 
 # Strategia Spread
-# Quanto vuoi guadagnare tra Buy e Sell?
-# 0.2% è conservativo. 0.05% fa tantissimo volume ma rischia di più.
-SPREAD_PCT = 0.002 # 0.2% spread totale (0.1% per lato)
+BASE_SPREAD = 0.002      # 0.2% Spread base
+MIN_SPREAD = 0.0005      # 0.05% Spread minimo (per uscire veloci)
 
 def cancel_all_orders(bot):
     try:
-        orders = bot.info.open_orders(bot.account.address)
+        # Usa account_address
+        orders = bot.info.open_orders(bot.account_address)
         for o in orders:
             if o['coin'] == TICKER:
                 bot.exchange.cancel(TICKER, o['oid'])
     except: pass
 
 def run_weaver():
-    print(f"🕸️ [Weaver] Avvio Market Making su {TICKER}.")
+    print(f"🕸️ [Weaver Pro] Avvio Market Making su {TICKER}.")
+    print(f"   Inventory Rescue: ATTIVO.")
     
     private_key = os.getenv("PRIVATE_KEY")
     wallet = os.getenv("WALLET_ADDRESS").lower()
@@ -42,64 +44,98 @@ def run_weaver():
 
     while True:
         try:
-            # 1. Pulizia: Il Market Maker deve essere agile. 
-            # Cancella i vecchi ordini prima di piazzare i nuovi (così segui il prezzo)
+            # 1. Pulizia Totale (Il MM deve essere sempre fresco)
             cancel_all_orders(bot)
 
             # 2. Dati Mercato
             price = bot.get_market_price(TICKER)
             if price == 0: time.sleep(1); continue
 
-            # 3. Gestione Inventario (Sbilanciamento)
+            # 3. Analisi Inventario
             account = bot.get_account_status()
             my_pos = next((p for p in account["open_positions"] if p["symbol"] == TICKER), None)
             
             pos_size = float(my_pos['size']) if my_pos else 0.0
             pos_side = my_pos['side'] if my_pos else "FLAT"
+            pnl_usd = float(my_pos['pnl_usd']) if my_pos else 0.0
             
-            # Calcolo prezzi Bid/Ask neutrali
-            my_bid = price * (1 - (SPREAD_PCT / 2))
-            my_ask = price * (1 + (SPREAD_PCT / 2))
+            # --- CALCOLO PREZZI BID/ASK DINAMICI ---
+            
+            # Default: Spread simmetrico attorno al prezzo attuale
+            bid_price = price * (1 - (BASE_SPREAD / 2))
+            ask_price = price * (1 + (BASE_SPREAD / 2))
+            
+            # LOGICA DI SALVATAGGIO (Skewing)
+            # Se siamo esposti, spostiamo i prezzi per favorire l'uscita
+            
+            if pos_side == "LONG":
+                # Siamo Long. Vogliamo VENDERE (Ask).
+                # Avviciniamo l'Ask al prezzo attuale per uscire subito.
+                # Allontaniamo il Bid per non comprare ancora.
+                
+                # Se stiamo perdendo soldi, panic mode: spread minimo
+                if pnl_usd < 0:
+                    ask_price = price * (1 + MIN_SPREAD) # Vendi appena sopra il market
+                    bid_price = price * (1 - (BASE_SPREAD * 2)) # Compra molto sotto
+                    print(f"🚨 [RESCUE LONG] PnL {pnl_usd:.2f}. Abbasso Ask a {ask_price:.4f}")
+                else:
+                    # Se siamo in profitto, skew normale
+                    ask_price = price * (1 + (BASE_SPREAD / 4))
+                    bid_price = price * (1 - BASE_SPREAD)
 
-            # --- SKEWING (Inclinazione) ---
-            # Se siamo pieni di Long, vogliamo vendere di più e comprare di meno.
-            # Abbassiamo entrambi i prezzi per favorire la vendita.
-            skew = 0.0
+            elif pos_side == "SHORT":
+                # Siamo Short. Vogliamo COMPRARE (Bid).
+                # Alziamo il Bid per chiudere subito.
+                
+                if pnl_usd < 0:
+                    bid_price = price * (1 - MIN_SPREAD) # Compra appena sotto il market
+                    ask_price = price * (1 + (BASE_SPREAD * 2)) # Vendi molto sopra
+                    print(f"🚨 [RESCUE SHORT] PnL {pnl_usd:.2f}. Alzo Bid a {bid_price:.4f}")
+                else:
+                    bid_price = price * (1 - (BASE_SPREAD / 4))
+                    ask_price = price * (1 + BASE_SPREAD)
+
+            # Arrotondamento SUI (4 decimali)
+            bid_price = round(bid_price, 4)
+            ask_price = round(ask_price, 4)
+            
+            # Safety: Non incrociare (Ask > Bid)
+            if bid_price >= ask_price:
+                ask_price = bid_price + 0.0002
+
+            print(f"🕸️ P: {price:.4f} | {pos_side} {pos_size:.1f} (${pnl_usd:.2f}) | B: {bid_price} / A: {ask_price}")
+
+            # 4. Piazzamento Ordini
+            
+            # Calcolo quantità ordini
+            qty_bid = round(SIZE_PER_ORDER / bid_price, 1)
+            qty_ask = round(SIZE_PER_ORDER / ask_price, 1)
+            
+            # Calcolo Limiti Esposizione (Max 80% del budget allocato)
             MAX_POS_USD = TOTAL_ALLOCATION * LEVERAGE
             current_notional = pos_size * price
             
-            if current_notional > 0: # Siamo Long
-                # Più siamo Long, più lo skew è negativo (abbassa i prezzi)
-                skew = - (current_notional / MAX_POS_USD) * 0.002 
-            elif current_notional < 0: # Siamo Short
-                # Più siamo Short, più lo skew è positivo (alza i prezzi per ricomprare)
-                skew = + (abs(current_notional) / MAX_POS_USD) * 0.002
-
-            final_bid = round(my_bid * (1 + skew), 4)
-            final_ask = round(my_ask * (1 + skew), 4)
-
-            # Safety check: Non incrociare il mercato (Ask deve essere > Bid)
-            if final_bid >= final_ask:
-                final_ask = final_bid + 0.0002
-
-            print(f"🕸️ P: {price:.4f} | Pos: {pos_side} {pos_size:.1f} | Bid: {final_bid} / Ask: {final_ask}")
-
-            # 4. Piazzamento Ordini (Doppia canna)
-            # Calcolo quantità
-            qty_bid = round(SIZE_PER_ORDER / final_bid, 1)
-            qty_ask = round(SIZE_PER_ORDER / final_ask, 1)
-
-            # Se siamo troppo Long, non comprare altro (Quote Only)
-            if pos_side == "LONG" and current_notional > (MAX_POS_USD * 0.8):
-                print("   ⚠️ Max Long raggiunto. Solo Ask.")
-            else:
-                bot.exchange.order(TICKER, True, qty_bid, final_bid, {"limit": {"tif": "Alo"}})
-
-            # Se siamo troppo Short, non vendere altro (Bid Only)
-            if pos_side == "SHORT" and abs(current_notional) > (MAX_POS_USD * 0.8):
-                print("   ⚠️ Max Short raggiunto. Solo Bid.")
-            else:
-                bot.exchange.order(TICKER, False, qty_ask, final_ask, {"limit": {"tif": "Alo"}})
+            # Piazza BID (Se non siamo troppo Long)
+            if not (pos_side == "LONG" and current_notional > (MAX_POS_USD * 0.8)):
+                bot.exchange.order(TICKER, True, qty_bid, bid_price, {"limit": {"tif": "Alo"}})
+            
+            # Piazza ASK (Se non siamo troppo Short)
+            if not (pos_side == "SHORT" and abs(current_notional) > (MAX_POS_USD * 0.8)):
+                # Se siamo Long, la size di vendita deve essere almeno pari a quella che abbiamo per chiudere
+                # Ma qui stiamo facendo MM, quindi piazziamo size standard. 
+                # Se vogliamo chiudere tutto il blocco, aumentiamo la size.
+                
+                # Se siamo in Rescue Mode, vendiamo tutto quello che abbiamo
+                if pos_side == "LONG" and pnl_usd < 0:
+                    qty_ask = pos_size # Vendi tutto
+                    
+                bot.exchange.order(TICKER, False, qty_ask, ask_price, {"limit": {"tif": "Alo"}})
+                
+            # Caso speciale Rescue Short: Compra tutto per chiudere
+            if pos_side == "SHORT" and pnl_usd < 0:
+                 # Sovrascriviamo l'ordine bid piazzato sopra (o ne mettiamo uno specifico)
+                 cancel_all_orders(bot) # Reset veloce
+                 bot.exchange.order(TICKER, True, pos_size, bid_price, {"limit": {"tif": "Alo"}})
 
         except Exception as e:
             print(f"Err Weaver: {e}")
