@@ -22,7 +22,7 @@ LEVERAGE = 10
 SIZE_PER_ORDER = 15.0    # Size standard
 
 # Strategia Spread
-BASE_SPREAD = 0.002      # 0.2% Spread base
+BASE_SPREAD = 0.001      # 0.2% Spread base
 MIN_SPREAD = 0.0005      # 0.05% Spread minimo (per uscire veloci)
 
 def cancel_all_orders(bot):
