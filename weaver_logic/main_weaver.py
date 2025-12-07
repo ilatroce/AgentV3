@@ -30,7 +30,7 @@ AGENT_NAME = "Weaver"
 
 TICKER = "SUI"
 
-LOOP_SPEED = 5  
+LOOP_SPEED = 10  
 
 
 
