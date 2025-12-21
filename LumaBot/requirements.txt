@@ -1,0 +1,6 @@
+eth-account
+hyperliquid
+requests
+pandas
+numpy
+colorama
