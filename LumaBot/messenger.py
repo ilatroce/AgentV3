@@ -1,11 +1,13 @@
-import json
+import os
 import requests
 class Messenger:
     def __init__(self):
-        try:
-            with open("server_config.json") as f:
-                self.hooks = json.load(f).get("discord_webhooks", {})
-        except: self.hooks = {}
+        # We try to grab the URL directly from Environment
+        self.hooks = {
+            "trades": os.environ.get("DISCORD_TRADES"),
+            "errors": os.environ.get("DISCORD_ERRORS"),
+            "info":   os.environ.get("DISCORD_INFO")
+        }
 
     def send(self, channel, message):
         url = self.hooks.get(channel)
