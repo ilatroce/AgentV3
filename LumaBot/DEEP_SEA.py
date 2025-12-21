@@ -3,9 +3,9 @@ import json
 import os
 
 class DeepSea:
-    def __init__(self):
+    def __init__(self, data_path="."):
         print(">> Deep Sea (Shield & Ratchet) Loaded")
-        self.state_file = "ratchet_state.json"
+        self.state_file = os.path.join(data_path, "ratchet_state.json")
         self.ratchet_state = self._load_state()
         self.secured_coins = list(self.ratchet_state.keys())
 
@@ -32,6 +32,7 @@ class DeepSea:
         events = []
         
         active_coins = [p['coin'] for p in positions]
+        # Clean up old states for closed coins
         for coin in list(self.ratchet_state.keys()):
             if coin not in active_coins:
                 del self.ratchet_state[coin]
@@ -56,6 +57,7 @@ class DeepSea:
             max_roe_loss = -(stop_loss_pct * lev * 100)
             if max_roe_loss < -50.0: max_roe_loss = -50.0
             
+            # STOP LOSS LOGIC
             if roe < max_roe_loss:
                 msg = f"🛡️ SHIELD: Stopping {coin} at ${pnl:.2f} (Hit {stop_loss_pct*100}% Limit)"
                 print(msg)
@@ -64,10 +66,10 @@ class DeepSea:
                 hands.place_market_order(coin, side, abs(size_coins))
                 continue
 
+            # RATCHET (PROFIT LOCK) LOGIC
             if coin not in self.ratchet_state:
                 if pnl > activation_trigger:
                     msg = f"🔒 RATCHET: Locking {coin} (Starts at ${pnl:.2f})"
-                    print(msg)
                     events.append(msg)
                     self.ratchet_state[coin] = {"highest_pnl": pnl}
                     self._save_state()
@@ -87,7 +89,6 @@ class DeepSea:
                 
                 if pnl < cutoff_value:
                     msg = f"💰 BANKING: {coin} ${pnl:.2f}"
-                    print(msg)
                     events.append(msg)
                     side = "SELL" if size_coins > 0 else "BUY"
                     hands.place_market_order(coin, side, abs(size_coins))
