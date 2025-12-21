@@ -1,7 +1,6 @@
 import json
 import time
 import os
-import math
 from eth_account import Account
 from hyperliquid.info import Info
 from hyperliquid.exchange import Exchange
@@ -10,17 +9,18 @@ from hyperliquid.utils import constants
 class Hands:
     def __init__(self):
         print(">> HANDS ARMED: Exchange Connected")
-        self.config = self._load_config()
-        key = self.config.get('secret_key') or self.config.get('private_key')
-        self.account = Account.from_key(key)
-        self.address = self.config['wallet_address']
+        self.address = os.environ.get("WALLET_ADDRESS")
+        # Supports PRIVATE_KEY or SECRET_KEY variable names
+        self.key = os.environ.get("PRIVATE_KEY") or os.environ.get("SECRET_KEY")
+        
+        if not self.key or not self.address:
+            print("xx CRITICAL: Credentials missing from Environment Variables.")
+            return
+
+        self.account = Account.from_key(self.key)
         self.info = Info(constants.MAINNET_API_URL, skip_ws=True)
         self.exchange = Exchange(self.account, constants.MAINNET_API_URL)
         
-    def _load_config(self):
-        with open("server_config.json") as f:
-            return json.load(f)
-
     def set_leverage_all(self, coins, leverage):
         print(f">> HANDS: Enforcing {leverage}x Leverage on Fleet...")
         for coin in coins:
@@ -78,6 +78,3 @@ class Hands:
             self.exchange.market_open(coin, is_buy, sz)
         except Exception as e:
             print(f"xx MARKET EXECUTION FAILED: {e}")
-
-    def place_stop(self, coin, price):
-        pass
