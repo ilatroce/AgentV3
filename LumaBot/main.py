@@ -9,7 +9,7 @@ warnings.simplefilter("ignore")
 
 # --- RAILWAY CONFIGURATION ---
 # Checks if we are on Railway (Volume mount) or Local
-DATA_DIR = "/app/data" if os.path.exists("/app/data") else "."
+DATA_DIR = "." #if os.path.exists("/app/data") else "."
 ANCHOR_FILE = os.path.join(DATA_DIR, "equity_anchor.json")
 
 BTC_TICKER = "BTC"
