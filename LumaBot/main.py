@@ -8,7 +8,31 @@ from collections import deque
 warnings.simplefilter("ignore")
 
 # TIER: 376 (FINAL STABLE: NO LOOP + DYNAMIC SCALING)
-CONFIG_FILE = "server_config.json"
+# REPLACE THE CONFIG LOADING SECTION IN MAIN.PY WITH THIS:
+import os
+
+# ... imports ...
+
+def get_config():
+    # Check if running on Cloud/Railway by looking for Env Vars
+    if os.getenv("PRIVATE_KEY"):
+        return {
+            "wallet_address": os.getenv("WALLET_ADDRESS"),
+            "private_key": os.getenv("PRIVATE_KEY"),
+            "gemini_api_key": os.getenv("GEMINI_KEY"),
+            "discord_webhooks": {
+                "trades": os.getenv("DISCORD_TRADES"),
+                "errors": os.getenv("DISCORD_ERRORS"),
+                "info": os.getenv("DISCORD_INFO")
+            },
+            "risk_level": "AGGRESSIVE" # Or make this an env var too
+        }
+    else:
+        # Fallback to local file for testing
+        with open("server_config.json") as f:
+            return json.load(f)
+
+# Inside main_loop(), call get_config() instead of json.load()
 ANCHOR_FILE = "equity_anchor.json"
 BTC_TICKER = "BTC"
 
@@ -164,7 +188,7 @@ def main_loop():
     try:
         update_heartbeat("BOOTING")
         try:
-            cfg = json.load(open(CONFIG_FILE))
+            cfg = get_config()
             address = cfg.get('wallet_address')
         except: return
 
