@@ -11,7 +11,7 @@ from eth_account.signers.local import LocalAccount
 SYMBOL = "ETH"           # Coin to trade
 TIMEFRAME = "15m"        # 15 Minute Candles
 LEVERAGE = 1             # Start safe (1x)
-SIZE_USD = 20.0          # Amount to trade per entry (in USD)
+SIZE_USD = 5.0          # Amount to trade per entry (in USD)
 RISK_REWARD = 1.5        # Target 1.5x the risk
 STOP_LOSS_PCT = 0.01     # 1% Stop Loss distance (adjust based on volatility)
 
