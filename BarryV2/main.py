@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from hyperliquid.info import Info
 from hyperliquid.exchange import Exchange
 from hyperliquid.utils import constants
-from eth_account.signers.local import LocalAccount
+from eth_account import Account  # <--- CHANGED THIS IMPORT
 
 # --- CONFIGURATION ---
 SYMBOL = "ETH"           # Coin to trade
@@ -17,8 +17,7 @@ STOP_LOSS_PCT = 0.01     # 1% Stop Loss distance
 
 # Load Environment Variables
 load_dotenv()
-# UPDATED: Using PRIVATE_KEY as requested
-PRIVATE_KEY = os.getenv("PRIVATE_KEY")
+PRIVATE_KEY = os.getenv("PRIVATE_KEY") 
 WALLET_ADDRESS = os.getenv("WALLET_ADDRESS")
 
 def get_market_data(info):
@@ -71,20 +70,25 @@ def execute_trade(exchange, side, entry_price):
 def main():
     print("--- Hyperliquid Bot Starting ---")
     
-    # UPDATED: Authenticate with PRIVATE_KEY
+    # Validation
     if not PRIVATE_KEY or not WALLET_ADDRESS:
         print("❌ Error: PRIVATE_KEY or WALLET_ADDRESS not found in Environment Variables.")
         return
 
-    account = LocalAccount(key=PRIVATE_KEY, address=WALLET_ADDRESS)
-    info = Info(constants.MAINNET_API_URL, skip_ws=True)
-    exchange = Exchange(account, constants.MAINNET_API_URL, account_address=WALLET_ADDRESS)
-    
-    print(f"Setting Leverage to {LEVERAGE}x")
     try:
+        # --- FIX IS HERE ---
+        # We use Account.from_key which derives the address automatically
+        account = Account.from_key(PRIVATE_KEY)
+        
+        info = Info(constants.MAINNET_API_URL, skip_ws=True)
+        # We still pass WALLET_ADDRESS to Exchange so it knows which sub-account to look at
+        exchange = Exchange(account, constants.MAINNET_API_URL, account_address=WALLET_ADDRESS)
+        
+        print(f"Setting Leverage to {LEVERAGE}x")
         exchange.update_leverage(LEVERAGE, SYMBOL)
     except Exception as e:
-        print(f"Leverage update warning (safe to ignore if already set): {e}")
+        print(f"⚠️ Initialization Error (Check Keys): {e}")
+        return
 
     while True:
         try:
