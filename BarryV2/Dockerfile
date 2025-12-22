@@ -1,18 +1,20 @@
-# Use a stable, lightweight official Python image
-# We use 3.12 to be safe, but you can change to 3.13 if strictly needed.
 FROM python:3.12-slim
 
-# Set the working directory in the cloud
+# Set working directory
 WORKDIR /app
 
-# Copy the requirements file first (for caching speed)
+# COPY requirements first
 COPY requirements.txt .
 
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of your code
+# Copy the rest of the code
 COPY . .
 
-# Command to run the bot
+# --- THE FIX IS HERE ---
+# This forces Python to print logs to Railway immediately
+ENV PYTHONUNBUFFERED=1
+
+# Run the bot
 CMD ["python", "main.py"]
