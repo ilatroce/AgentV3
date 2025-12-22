@@ -4,6 +4,6 @@
 echo "⚓ Starting Barry (Agent)..."
 python barry.py &
 
-# Start the Dashboard in the foreground
+# Start the Dashboard in the foreground (Using 'python -m' is safer)
 echo "📊 Starting Happy Harbor Dashboard..."
-streamlit run dashboard.py --server.port $PORT --server.address 0.0.0.0
+python -m streamlit run dashboard.py --server.port $PORT --server.address 0.0.0.0
