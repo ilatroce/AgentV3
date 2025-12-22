@@ -17,7 +17,7 @@ STOP_LOSS_PCT = 0.01     # 1% Stop Loss distance (adjust based on volatility)
 
 # Load Environment Variables (Set these in Railway)
 load_dotenv()
-SECRET_KEY = os.getenv("SECRET_KEY")
+SECRET_KEY = os.getenv("PRIVATE_KEY")
 WALLET_ADDRESS = os.getenv("WALLET_ADDRESS")
 
 def get_market_data(info):
