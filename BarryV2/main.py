@@ -1,21 +1,21 @@
 import os
 import time
 import pandas as pd
+import datetime 
 from dotenv import load_dotenv
 from hyperliquid.info import Info
 from hyperliquid.exchange import Exchange
 from hyperliquid.utils import constants
-from eth_account import Account  # <--- CHANGED THIS IMPORT
+from eth_account import Account
 
 # --- CONFIGURATION ---
-SYMBOL = "ETH"           # Coin to trade
-TIMEFRAME = "15m"        # 15 Minute Candles
-LEVERAGE = 1             # Start safe (1x)
-SIZE_USD = 20.0          # Amount to trade per entry (in USD)
-RISK_REWARD = 1.5        # Target 1.5x the risk
-STOP_LOSS_PCT = 0.01     # 1% Stop Loss distance 
+SYMBOL = "ETH"           
+TIMEFRAME = "15m"        
+LEVERAGE = 1             
+SIZE_USD = 20.0          
+RISK_REWARD = 1.5        
+STOP_LOSS_PCT = 0.01     
 
-# Load Environment Variables
 load_dotenv()
 PRIVATE_KEY = os.getenv("PRIVATE_KEY") 
 WALLET_ADDRESS = os.getenv("WALLET_ADDRESS")
@@ -23,7 +23,14 @@ WALLET_ADDRESS = os.getenv("WALLET_ADDRESS")
 def get_market_data(info):
     """Fetches 15m candles and calculates EMAs."""
     print(f"Fetching data for {SYMBOL}...")
-    candles = info.candles_snapshot(SYMBOL, TIMEFRAME) 
+    
+    # --- FIX: Calculate Start/End Times (Milliseconds) ---
+    # We fetch 5 days of data to ensure we have enough for the 200 EMA
+    end_time = int(time.time() * 1000)
+    start_time = end_time - (5 * 24 * 60 * 60 * 1000) # 5 days back
+    
+    # Updated function call with times
+    candles = info.candles_snapshot(SYMBOL, TIMEFRAME, start_time, end_time) 
     
     df = pd.DataFrame(candles)
     df['c'] = df['c'].astype(float)
@@ -37,16 +44,11 @@ def get_market_data(info):
     return df
 
 def execute_trade(exchange, side, entry_price):
-    """Places a Market Entry + SL/TP Trigger Orders."""
-    
-    # Calculate Position Size
     size = round(SIZE_USD / entry_price, 4) 
-    
     print(f"🚀 Placing {side} Order: {size} {SYMBOL} at ~${entry_price}")
 
     is_buy = True if side == "BUY" else False
     
-    # Place Market Order
     order_result = exchange.market_open(SYMBOL, is_buy, size, None, 0.01)
     print(f"Entry Result: {order_result}")
 
@@ -63,31 +65,25 @@ def execute_trade(exchange, side, entry_price):
 
         print(f"🛡️ Setting SL: {sl_price} | 🎯 Setting TP: {tp_price}")
 
-        # Place SL and TP
         exchange.order(SYMBOL, not is_buy, size, sl_price, {"trigger": {"isMarket": True, "triggerPx": sl_price, "tpsl": "sl"}})
         exchange.order(SYMBOL, not is_buy, size, tp_price, {"trigger": {"isMarket": True, "triggerPx": tp_price, "tpsl": "tp"}})
 
 def main():
     print("--- Hyperliquid Bot Starting ---")
     
-    # Validation
     if not PRIVATE_KEY or not WALLET_ADDRESS:
-        print("❌ Error: PRIVATE_KEY or WALLET_ADDRESS not found in Environment Variables.")
+        print("❌ Error: PRIVATE_KEY or WALLET_ADDRESS not found.")
         return
 
     try:
-        # --- FIX IS HERE ---
-        # We use Account.from_key which derives the address automatically
         account = Account.from_key(PRIVATE_KEY)
-        
         info = Info(constants.MAINNET_API_URL, skip_ws=True)
-        # We still pass WALLET_ADDRESS to Exchange so it knows which sub-account to look at
         exchange = Exchange(account, constants.MAINNET_API_URL, account_address=WALLET_ADDRESS)
         
         print(f"Setting Leverage to {LEVERAGE}x")
         exchange.update_leverage(LEVERAGE, SYMBOL)
     except Exception as e:
-        print(f"⚠️ Initialization Error (Check Keys): {e}")
+        print(f"⚠️ Initialization Error: {e}")
         return
 
     while True:
