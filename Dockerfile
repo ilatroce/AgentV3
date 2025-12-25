@@ -1,18 +1,22 @@
-# Use Python 3.12
 FROM python:3.12-slim
 
-# Set the working directory to /app
+# Set working directory
 WORKDIR /app
 
-# Copy requirements from the root directory
+# --- FIX LOGGING ---
+# This ensures print statements show up immediately in Railway logs
+ENV PYTHONUNBUFFERED=1 
+# -------------------
+
+# Copy requirements
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# COPY EVERYTHING (BarryV2, harvest_logic, hyperliquid_trader.py) into /app
+# Copy everything
 COPY . .
 
-# Make the start script executable
+# Permissions
 RUN chmod +x BarryV2/start.sh
 
-# Run the start script
+# Run
 CMD ["./BarryV2/start.sh"]
