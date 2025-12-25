@@ -1,9 +1,13 @@
 #!/bin/bash
 
-# Start the Trading Bot in the background
+# 1. Start Barry (Trend Follower)
 echo "⚓ Starting Barry (Agent)..."
 python barry.py &
 
-# Start the Dashboard in the foreground (Using 'python -m' is safer)
+# 2. Start Harvest (Funding Scanner) - NEW
+echo "🚜 Starting Harvest (Funding Scanner)..."
+python harvest_logic/main_harvest.py &
+
+# 3. Start the Dashboard in the foreground
 echo "📊 Starting Happy Harbor Dashboard..."
 python -m streamlit run dashboard.py --server.port $PORT --server.address 0.0.0.0
