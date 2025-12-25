@@ -481,22 +481,15 @@ class HyperLiquidTrader:
             print(f"Eccezione get_candles: {e}")
             return pd.DataFrame()
 
-    # ----------------------------------------------------------------------
-    #                        FUNDING / MARKET DATA
-    # ----------------------------------------------------------------------
+# Add this inside the HyperLiquidTrader class
     def get_funding_landscape(self):
-        """
-        Fetches metadata and asset contexts to calculate funding rates.
-        Returns a list of dictionaries with coin, funding, and price.
-        """
         import requests
-        
-        url = "https://api.hyperliquid.xyz/info"
-        headers = {"Content-Type": "application/json"}
-        payload = {"type": "metaAndAssetCtxs"}
-
         try:
+            url = "https://api.hyperliquid.xyz/info"
+            headers = {"Content-Type": "application/json"}
+            payload = {"type": "metaAndAssetCtxs"}
             response = requests.post(url, json=payload, headers=headers)
+            
             if response.status_code == 200:
                 data = response.json()
                 universe = data[0]['universe']
@@ -505,22 +498,16 @@ class HyperLiquidTrader:
                 landscape = []
                 for i, coin_meta in enumerate(universe):
                     ctx = asset_ctxs[i]
-                    coin_name = coin_meta['name']
-                    
-                    # Funding is hourly rate in decimals (e.g. 0.0001 = 0.01%)
                     funding = float(ctx.get('funding', 0.0))
                     price = float(ctx.get('markPx', 0.0))
-                    
                     landscape.append({
-                        "coin": coin_name,
+                        "coin": coin_meta['name'],
                         "funding_hourly": funding,
                         "funding_apr": funding * 24 * 365 * 100,
                         "price": price
                     })
-                
-                # Sort by highest absolute funding (interesting for both Long and Short)
                 return sorted(landscape, key=lambda x: abs(x['funding_hourly']), reverse=True)
             return []
         except Exception as e:
-            print(f"Error fetching funding landscape: {e}")
+            print(f"Error fetching funding: {e}")
             return []
