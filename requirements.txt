@@ -13,4 +13,3 @@ toonify
 psycopg2-binary
 openai
 plotly
-psycopg2
