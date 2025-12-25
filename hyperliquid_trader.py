@@ -1,7 +1,7 @@
 import json
 from decimal import Decimal, ROUND_DOWN
 from typing import Dict, Any
-
+import requests
 import eth_account
 from eth_account.signers.local import LocalAccount
 
