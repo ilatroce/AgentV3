@@ -1,13 +1,14 @@
 #!/bin/bash
+cd /app
 
-# 1. Start Barry (Trend Follower)
-echo "⚓ Starting Barry (Agent)..."
-python barry.py &
-
-# 2. Start Harvest (Funding Scanner) - NEW
-echo "🚜 Starting Harvest (Funding Scanner)..."
+# Start Harvest (Scanner)
+echo "🚜 Starting Harvest..."
 python harvest_logic/main_harvest.py &
 
-# 3. Start the Dashboard in the foreground
-echo "📊 Starting Happy Harbor Dashboard..."
-python -m streamlit run dashboard.py --server.port $PORT --server.address 0.0.0.0
+# Start Barry (Trader)
+echo "⚓ Starting Barry..."
+python BarryV2/barry.py &
+
+# Start Dashboard
+echo "📊 Starting Dashboard..."
+python -m streamlit run BarryV2/dashboard.py --server.port $PORT --server.address 0.0.0.0
