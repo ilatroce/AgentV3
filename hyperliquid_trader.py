@@ -482,19 +482,39 @@ class HyperLiquidTrader:
             return pd.DataFrame()
 
 # Add this inside the HyperLiquidTrader class
-    def get_funding_landscape(self):
-        import requests
-        try:
-            url = "https://api.hyperliquid.xyz/info"
-            headers = {"Content-Type": "application/json"}
-            payload = {"type": "metaAndAssetCtxs"}
-            response = requests.post(url, json=payload, headers=headers)
+    def get_funding_opportunities(self, min_hourly_funding=0.0001):
+        """Returns coins that exist in BOTH Spot and Perp markets with high funding."""
+        raw_funding = self.get_funding_landscape()
+        
+        opportunities = []
+        for item in raw_funding:
+            coin = item['coin']
+            funding = item['funding_hourly']
             
-            if response.status_code == 200:
-                data = response.json()
+            # Filter 1: Positive Funding only (Longs pay Shorts)
+            if funding < min_hourly_funding: 
+                continue
+                
+            # Filter 2: Must exist in Spot Market (to Hedge)
+            if coin not in self.spot_coin_to_asset:
+                continue
+                
+            item['spot_asset_id'] = self.spot_coin_to_asset[coin]
+            opportunities.append(item)
+            
+        return opportunities
+
+    def get_funding_landscape(self):
+        """Fetches metadata to calculate funding rates."""
+        try:
+            url = f"{self.base_url}/info"
+            payload = {"type": "metaAndAssetCtxs"}
+            resp = requests.post(url, json=payload, headers={"Content-Type": "application/json"})
+            
+            if resp.status_code == 200:
+                data = resp.json()
                 universe = data[0]['universe']
                 asset_ctxs = data[1]
-                
                 landscape = []
                 for i, coin_meta in enumerate(universe):
                     ctx = asset_ctxs[i]
@@ -506,8 +526,8 @@ class HyperLiquidTrader:
                         "funding_apr": funding * 24 * 365 * 100,
                         "price": price
                     })
-                return sorted(landscape, key=lambda x: abs(x['funding_hourly']), reverse=True)
+                return sorted(landscape, key=lambda x: x['funding_hourly'], reverse=True)
             return []
         except Exception as e:
-            print(f"Error fetching funding: {e}")
+            print(f"Error funding landscape: {e}")
             return []
