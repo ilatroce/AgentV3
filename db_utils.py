@@ -877,3 +877,17 @@ if __name__ == "__main__":
     #     forecasts=example_forecasts,
     # )
     # print(f"[db_utils] Operazione inserita con id={op_id}")
+
+def get_grid_alerts(limit=50):
+    """Fetches the latest Grid Scanner alerts."""
+    try:
+        response = supabase.table("bot_operations") \
+            .select("*") \
+            .eq("operation", "GRID_ALERT") \
+            .order("created_at", desc=True) \
+            .limit(limit) \
+            .execute()
+        return response.data
+    except Exception as e:
+        print(f"Error fetching grid alerts: {e}")
+        return []
