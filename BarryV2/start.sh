@@ -3,7 +3,7 @@ cd /app
 
 # Start Harvest (Scanner)
 echo "🚜 Starting Harvest..."
-python harvest_logic/main_harvest.py &
+python harvest_logic/main_grid_scanner.py &
 
 # Start Barry (Trader)
 echo "⚓ Starting Barry..."
