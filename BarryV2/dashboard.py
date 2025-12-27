@@ -3,145 +3,89 @@ import pandas as pd
 import time
 import sys
 import os
-import re
 
 # Add parent dir to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import db_utils
 
-# --- 🎨 CONFIGURATION ---
+# --- 🖥️ CONFIGURATION ---
 st.set_page_config(
-    page_title="Happy Harbor | Live Feed",
-    page_icon="⚓",
+    page_title="Terminal",
+    page_icon="💻",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# --- ✨ ELEGANT CSS (White & Green) ---
+# --- ⬛ PURE BLACK TERMINAL CSS ---
 st.markdown("""
 <style>
-    /* 1. Force White Background */
+    /* 1. Force Pure Black Background */
     .stApp {
-        background-color: #ffffff;
-        color: #1a202c;
-        font-family: 'Helvetica Neue', sans-serif;
+        background-color: #000000 !important;
     }
     
-    /* 2. Green Shaded Sections (Cards) */
-    .green-card {
-        background-color: #f0fff4; /* Mint Green */
-        border-left: 5px solid #48bb78; /* Strong Green Line */
-        padding: 20px;
-        border-radius: 8px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-        margin-bottom: 25px;
-    }
-    
-    /* 3. Typography */
-    h1, h2, h3 {
-        color: #2f855a; /* Dark Green Text */
-        font-weight: 700;
-    }
-    p, span, div {
-        color: #2d3748;
-    }
-    
-    /* 4. Streamlit Metric Overrides */
-    div[data-testid="stMetricValue"] {
-        color: #22543d !important; /* Dark Green Numbers */
-    }
-    
-    /* 5. Hide Streamlit Elements for Cleanliness */
-    #MainMenu {visibility: hidden;}
+    /* 2. Hide Header/Footer for full immersion */
+    header {visibility: hidden;}
     footer {visibility: hidden;}
+    .stDeployButton {display:none;}
+    
+    /* 3. Terminal Font */
+    body, p, div, span, pre, code {
+        color: #00ff41 !important; /* Matrix Green Text */
+        font-family: 'Courier New', Courier, monospace !important;
+        font-size: 14px;
+    }
+
+    /* 4. Remove Streamlit Padding */
+    .block-container {
+        padding-top: 1rem;
+        padding-bottom: 1rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 🔄 FAST REFRESH (Every 5s for "Live" feel) ---
+# --- 🔄 AUTO REFRESH (Every 2s for "Real-time" feel) ---
 if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = time.time()
 
-if time.time() - st.session_state.last_refresh > 10:
+if time.time() - st.session_state.last_refresh > 2:
     st.session_state.last_refresh = time.time()
     st.rerun()
 
-# --- ⚓ HEADER ---
-st.title("⚓ Happy Harbor Live Feed")
-st.caption(f"Connected to Hyperliquid | Last Update: {pd.Timestamp.now().strftime('%H:%M:%S')}")
+# --- 💻 THE LOGIC ---
+# We fetch BOTH Grid Alerts and Regular Logs in one go
+# We need a custom query or just fetch raw logs if get_recent_logs handles it.
+# db_utils.get_recent_logs fetches from 'bot_operations' which includes EVERYTHING.
+raw_logs = db_utils.get_recent_logs(limit=200)
 
-# --- 🕸️ SECTION 1: MARKET RADAR (Grid Scanner) ---
-st.markdown('<div class="green-card">', unsafe_allow_html=True)
-st.subheader("🕸️ Volatility Radar (Grid Scanner)")
-
-alerts = db_utils.get_grid_alerts(limit=50)
-
-if alerts:
-    df_grid = pd.DataFrame(alerts)
-
-    # Parser Logic
-    def parse_grid_reason(reason):
-        pump_match = re.search(r'Pumped \+([\d\.]+)%', reason)
-        pump = float(pump_match.group(1)) if pump_match else 0.0
+if raw_logs:
+    terminal_output = []
+    
+    for log in raw_logs:
+        # 1. Parse Timestamp
+        # Handle cases where created_at might be string or datetime
+        ts_val = log.get('created_at')
+        if isinstance(ts_val, pd.Timestamp) or hasattr(ts_val, 'strftime'):
+            ts = ts_val.strftime('%H:%M:%S')
+        else:
+            ts = str(ts_val).split('T')[-1].split('.')[0] # Fallback
+            
+        # 2. Extract Fields
+        op = log.get('operation', 'UNKNOWN')
+        sym = log.get('symbol') or "---"
+        direction = log.get('direction') or "-"
+        reason = log.get('reason') or "No details"
         
-        shrink_match = re.search(r'Consolidated \(([\d\.]+)x\)', reason)
-        shrink = float(shrink_match.group(1)) if shrink_match else 1.0
-        return pd.Series([pump, shrink])
+        # 3. Format the Line (Terminal Style)
+        # Example: [22:05:10] GRID_ALERT   | BTC    | PUMPED +15% ...
+        line = f"[{ts}] {op:<12} | {sym:<6} | {direction:<4} | {reason}"
+        terminal_output.append(line)
 
-    df_grid[['pump_pct', 'shrink_factor']] = df_grid['reason'].apply(parse_grid_reason)
-    df_display = df_grid[['symbol', 'pump_pct', 'shrink_factor', 'created_at']].copy()
+    # Join with newlines
+    full_log_text = "\n".join(terminal_output)
     
-    # Simple Style
-    st.dataframe(
-        df_display,
-        column_config={
-            "symbol": "Asset",
-            "pump_pct": st.column_config.ProgressColumn(
-                "24h Pump", format="%d%%", min_value=0, max_value=100
-            ),
-            "shrink_factor": st.column_config.NumberColumn(
-                "Shrink (Risk)", format="%.2fx"
-            ),
-            "created_at": st.column_config.DatetimeColumn(
-                "Time Detected", format="HH:mm:ss"
-            )
-        },
-        width="stretch",  # <--- FIXED WARNING
-        hide_index=True,
-        height=300
-    )
+    # Display as a Code Block (Preserves spacing, monospaced, scrollable)
+    st.text(f"root@happy-harbor:~# tail -f /var/log/trading_bot.log\n\n{full_log_text}")
+
 else:
-    st.info("Scanner is quiet. No high-volatility targets found.")
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-
-# --- 🤖 SECTION 2: EXECUTION LOGS ---
-st.markdown('<div class="green-card">', unsafe_allow_html=True)
-st.subheader("🤖 Bot Activity Log")
-
-logs = db_utils.get_recent_logs(limit=50)
-
-if logs:
-    df_logs = pd.DataFrame(logs)
-    
-    # Filter out the GRID alerts from the main log to avoid duplicate noise
-    # (Assuming we only want trade execution / system events here)
-    df_logs = df_logs[df_logs['operation'] != 'GRID_ALERT']
-
-    st.dataframe(
-        df_logs,
-        width="stretch", # <--- FIXED WARNING
-        height=400,
-        hide_index=True,
-        column_config={
-            "created_at": st.column_config.DatetimeColumn("Timestamp", format="HH:mm:ss"),
-            "operation": "Action",
-            "symbol": "Symbol",
-            "direction": "Side",
-            "reason": "Logic / Signal"
-        }
-    )
-else:
-    st.caption("No recent trading activity.")
-
-st.markdown('</div>', unsafe_allow_html=True)
+    st.text("root@happy-harbor:~# Waiting for logs...")
